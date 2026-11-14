@@ -1,0 +1,6 @@
+*.img
+*.bin
+*.dtb
+*.cpio.gz
+backups/
+firmware-vendor/
