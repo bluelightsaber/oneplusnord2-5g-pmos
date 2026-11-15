@@ -74,6 +74,28 @@ Differences found by diffing the decompiled trees (`scripts/dtpaths.py`):
 4. **Works**: gadget `18d1:d001` 15 s after `fastboot reboot recovery`, ACM root shell, MemTotal 11.3 GB, UFS
    (`ufshcd-mtk`, Samsung KLUEG8UHDC-B0E1, LUNs sda/sdb/sdc), mtu3 device mode.
 
+## 8. postmarketOS from RAM, SSH over USB (2026-11-15)
+Nothing is written to UFS yet. The userland is pmOS edge for the generic `qemu-aarch64` device (console UI,
+systemd), built with `pmbootstrap install --no-image` and packed as a tarball (`scripts/pmos-rootfs.sh`, ~600 MB,
+~1 GB unpacked). The kernel is ours with everything needed built in, so no modules are shipped.
+
+`scripts/pmos-ram.sh`:
+1. flash the test image to `recovery`, `fastboot reboot recovery` (the initramfs brings up ECM + ACM);
+2. give the host side of the ECM link 172.16.42.2 and serve the tarball with `python3 -m http.server`;
+3. over the ACM shell: mount a 6 GB tmpfs on `/newroot`, `wget -O - … | tar xz` (about 35 s);
+4. write `/sbin/init` into `/tmp/switchroot`: PID 1 of the initramfs moves `/dev`, `/proc` and `/sys` into the new
+   root and `exec switch_root`s. The gadget and the usb0 address survive the switch;
+5. `ssh user@172.16.42.1`.
+
+Result: systemd reaches its default target in 6 s of userspace, 8 CPUs, 11 GB RAM, the 238 GB UFS LUN is visible.
+Failing units are kernel-config gaps: `nftables` (no `NF_TABLES`) and zram swap (no `ZRAM`); the clock starts in
+the past (no RTC driver yet, no network time).
+
+pmbootstrap notes: the config key for the init system is `service_manager` (`default`/`openrc`/`systemd`);
+`--no-image` skips copying SSH keys (the script installs `authorized_keys` itself), and the default
+`ssh_key_glob` (`~/.ssh/*.pub`) copies every public key of the build user, so point it at one dedicated key.
+NetworkManager is told to leave `usb0` alone, because the initramfs already configured it.
+
 ## Reading a failed boot
 Flash TWRP back to `recovery`, boot it, dump `expdb` (`scripts/dump-chunked.sh OUT expdb:/dev/block/sdc8`) and run
 `strings`: LK's log and the kernel log are there. pstore is overwritten by the Android boot in between.

@@ -3,6 +3,7 @@
 # USB gadget 18d1:d001 = ECM (phone 172.16.42.1, MACs 02:00:00:d2:10:01/02) + ACM with a root shell on
 # /dev/ttyGS0 (host: /dev/ttyACM0). Read-only: mounts nothing from UFS.
 # Safety: reboot -f after $WAIT s (default 300) unless /tmp/keep exists -> LK boots Android normally.
+# /tmp/switchroot (written by the host) switches into a rootfs unpacked in /newroot.
 /bin/busybox --install -s /bin
 export PATH=/bin
 mount -t proc proc /proc
@@ -40,4 +41,9 @@ for i in $(seq 1 10); do [ -e /sys/class/net/usb0 ] && break; sleep 1; done
 ifconfig usb0 172.16.42.1 netmask 255.255.255.0 up && log "usb0 up"
 ( while true; do setsid sh -c "exec sh </dev/ttyGS0 >/dev/ttyGS0 2>&1"; sleep 1; done ) &
 log "shell on ttyGS0"
-while true; do sleep 3600; done
+# RAM boot of a full rootfs without flashing (scripts/pmos-ram.sh): the host unpacks it into /newroot and writes
+# the init path into /tmp/switchroot; then PID 1 (us) moves the mounts and switches. Gadget + usb0 IP stay.
+while [ ! -e /tmp/switchroot ]; do sleep 2; done
+log "switch_root to /newroot ($(cat /tmp/switchroot))"
+for m in dev proc sys; do mkdir -p /newroot/$m; mount --move /$m /newroot/$m; done
+exec switch_root /newroot $(cat /tmp/switchroot)

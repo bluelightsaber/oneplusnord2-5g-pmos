@@ -21,7 +21,8 @@ It is a personal hobby project, not an official postmarketOS port.
 | Mainline kernel 7.3.3 boots from the `recovery` slot | **done** |
 | USB device mode (configfs gadget: ECM + ACM root shell) | **done** |
 | UFS storage (all LUNs visible) | **done** |
-| postmarketOS rootfs + SSH | next |
+| postmarketOS rootfs (systemd) booted from RAM + SSH over USB | **done** |
+| Kernel config for server use (nftables, Docker, zram, RTC) | next |
 | Production install in `boot`, charging limit, USB host/Ethernet, Docker … | planned |
 
 The display is not driven yet (command-mode Samsung AMOLED); the LK boot logo stays on screen.
@@ -59,6 +60,7 @@ Key facts (details in the notes):
 | `scripts/bootimg2.py`, `mk-test-img.sh` | Minimal boot image v2 packer, test image for the recovery slot |
 | `initramfs-usb/`, `scripts/mk-initramfs.sh` | First-boot initramfs (USB gadget 18d1:d001, root shell on ACM, safety reboot) |
 | `scripts/slot-test.sh`, `acm-run.sh` | Flash-and-boot test cycle and the host side of the USB shell |
+| `scripts/pmos-rootfs.sh`, `pmos-ram.sh` | Build a pmOS rootfs tarball with pmbootstrap; boot it from RAM over USB and SSH in |
 | `scripts/brom-test.sh` | Read-only BROM check with mtkclient |
 | `scripts/dump-*.sh`, `twrp-to-recovery.sh` | Partition backup from TWRP (chunked, sha256-verified) |
 | `scripts/dtpaths.py` | Node/compatible/status listing to diff two decompiled device trees |
