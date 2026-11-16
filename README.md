@@ -22,8 +22,9 @@ It is a personal hobby project, not an official postmarketOS port.
 | USB device mode (configfs gadget: ECM + ACM root shell) | **done** |
 | UFS storage (all LUNs visible) | **done** |
 | postmarketOS rootfs (systemd) booted from RAM + SSH over USB | **done** |
-| Kernel config for server use (nftables, Docker, policy routing, WireGuard) | **done** (zram backends in test) |
+| Kernel config for server use (nftables, Docker, policy routing, WireGuard) | **done** |
 | **Wi-Fi** (MT6893 CONNAC2 `soc3_0`, WPA2, ~700 Mbit/s TCP) | **done** (RAM boot) |
+| Battery fuel gauge (TI bq28z610) | **done** (charger control: open) |
 | RTC (MT6359 keeps Android's encoding) | open |
 | Production install in `boot`, charging limit, USB host/Ethernet, Docker … | planned |
 

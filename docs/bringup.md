@@ -127,6 +127,16 @@ Lessons, in the order they showed up:
 Result: WPA2 connects on the first try, 0 % ping loss, about 700 Mbit/s TCP in each direction on 5 GHz.
 `scripts/nat-usb.sh` (NAT on the host over the USB link) was the stop-gap for internet before that.
 
+Afterwards: a 30-minute soak (900/900 pings, no chip reset), and NetworkManager connects on its own at boot.
+
+## 10. Battery fuel gauge (2026-11-16)
+The phone's own tree calls it `oplus,bq27541-battery` at 0x55 on i2c7 (`11d03000`), but flags it
+`qcom,batt_bq28z610` and runs that bus at 100 kHz. Described as `ti,bq27541` at 400 kHz it never ACKed; as
+`ti,bq28z610` at 100 kHz the mainline `bq27xxx_battery` driver reads it fine (2S pack, voltage, state of charge,
+cycle count, health, temperature). The chopin children of i2c7 (NFC, camera LDO) are deleted in the generated DT;
+0x68 on the same bus is the OnePlus charge pump and is left alone. The chargers themselves (MT6360, MPS MP2650,
+charge pump, fast-charge MCU) are not driven by Linux yet, so a charge limit is still open.
+
 ## Reading a failed boot
 Flash TWRP back to `recovery`, boot it, dump `expdb` (`scripts/dump-chunked.sh OUT expdb:/dev/block/sdc8`) and run
 `strings`: LK's log and the kernel log are there. pstore is overwritten by the Android boot in between.

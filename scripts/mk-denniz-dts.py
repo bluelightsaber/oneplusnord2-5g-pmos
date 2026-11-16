@@ -82,6 +82,26 @@ src += '''/* USB 2.0 device mode only: no role switch, never drive the MT6360 OT
 	/delete-property/ role-switch-default-mode;
 	/delete-property/ vbus-supply;
 };
+
+'''
+# denniz battery fuel gauge at 0x55 on i2c7 (11d03000), per the phone's own tree: node "oplus,bq27541-battery"
+# but flagged qcom,batt_bq28z610 (a TI bq28z610), bus at 100 kHz. Read-only for the kernel (mainline
+# bq27xxx_battery). The chopin children of i2c7 (NFC, camera LDO) are not on denniz; 0x68 is the charge pump.
+for child in ['st21nfc@08', 'nfc@08', 'willsemi,ldo@28']:
+    assert re.search(rf'^\t\t{re.escape(child)} \{{', src, re.M), child
+src += '''/* Fuel gauge: TI bq28z610 on i2c7 at 0x55, 100 kHz (from denniz's own tree). */
+&i2c7 {
+	status = "okay";
+	clock-frequency = <100000>;
+	/delete-node/ st21nfc@08;
+	/delete-node/ nfc@08;
+	/delete-node/ willsemi,ldo@28;
+
+	battery@55 {
+		compatible = "ti,bq28z610";
+		reg = <0x55>;
+	};
+};
 '''
 open(out, 'w').write(src)
 print('wrote', out)

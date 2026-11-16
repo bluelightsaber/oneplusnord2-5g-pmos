@@ -3534,3 +3534,17 @@
 	/delete-property/ role-switch-default-mode;
 	/delete-property/ vbus-supply;
 };
+
+/* Fuel gauge: TI bq28z610 on i2c7 at 0x55, 100 kHz (from denniz's own tree). */
+&i2c7 {
+	status = "okay";
+	clock-frequency = <100000>;
+	/delete-node/ st21nfc@08;
+	/delete-node/ nfc@08;
+	/delete-node/ willsemi,ldo@28;
+
+	battery@55 {
+		compatible = "ti,bq28z610";
+		reg = <0x55>;
+	};
+};

@@ -14,7 +14,7 @@ Updated: 2026-11-16. Project directory on the host: `/srv/nord2-pmos/`.
 - [x] First boot from the `recovery` slot: USB gadget + shell (172.16.42.1 / ttyACM)
 - [x] UFS visible, partitions listed
 - [x] pmOS rootfs (systemd) booted from RAM (switch_root) + SSH over USB
-- [x] Kernel config for server use: nftables/NAT, Docker requirements (built in; zram backends + i2c-dev in test)
+- [x] Kernel config for server use: nftables/NAT, Docker requirements, zram (lz4/zstd), i2c-dev (built in)
 - [ ] RTC (MT6359 reads 2069: Android keeps it with another base; never let Linux write it)
 - [ ] Persistent rootfs on internal storage instead of RAM
 - [x] LK normal-boot carve-outs captured from LK's log in expdb (still to be applied to the DT before `boot`)
@@ -22,7 +22,8 @@ Updated: 2026-11-16. Project directory on the host: `/srv/nord2-pmos/`.
 ## Level 2 — safety nets
 - [ ] experiment-fallback, usb-gadget-ensure, persistent journal (50M)
 ## Level 3 — power
-- [ ] Charging; 45–65 % charge limit; battery health checked
+- [x] Battery gauge (TI bq28z610 on i2c7, 100 kHz): capacity, voltage, cycles, health in /sys/class/power_supply
+- [ ] Charging control (MP2650 charger has no mainline driver); 45–65 % charge limit
 ## Level 4 — network
 - [x] Wi-Fi (MT6893 CONNAC2 soc3_0, vendor firmware from the phone's own partitions): WPA2, ~700 Mbit/s
   (fix: soc3_0 TX ring 2 is never programmed → priority ring disabled)
