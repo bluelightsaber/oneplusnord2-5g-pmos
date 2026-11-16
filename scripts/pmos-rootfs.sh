@@ -3,7 +3,8 @@
 # and pack it as a tarball for RAM boots (pmos-ram.sh): $N/images/pmos-root.tgz. The kernel stays ours (built in).
 # `install --no-image` skips pmbootstrap's SSH-key copy, so the denniz overlay is added here:
 #   - ~user/.ssh/authorized_keys from ~/.ssh/id_ed25519_nord2.pub (dedicated key, created if missing)
-#   - NetworkManager leaves usb0 alone (the initramfs already configured 172.16.42.1 on it)
+#   - NetworkManager leaves usb0 alone (the initramfs already configured 172.16.42.1 on it) and the extra
+#     interfaces of the MTK Wi-Fi driver (wlan1, ap0, p2p0): only wlan0 is scanned/used
 # Password: ~/oneplusnord2-password.txt (never printed). Usage: pmos-rootfs.sh [--pack-only]
 set -euo pipefail
 renice -n 19 -p $$ >/dev/null; ionice -c3 -p $$
@@ -18,7 +19,10 @@ R=$N/pmbootstrap-work/chroot_rootfs_qemu-aarch64
 U=$(stat -c %u $R/home/user)
 sudo -n install -d -m 700 -o $U -g $U $R/home/user/.ssh
 sudo -n install -m 600 -o $U -g $U $K.pub $R/home/user/.ssh/authorized_keys
-printf '[keyfile]\nunmanaged-devices=interface-name:usb0\n' | sudo -n tee $R/etc/NetworkManager/conf.d/90-denniz-usb0.conf >/dev/null
+printf '[keyfile]\nunmanaged-devices=interface-name:usb0;interface-name:wlan1;interface-name:ap0;interface-name:p2p0\n' | sudo -n tee $R/etc/NetworkManager/conf.d/90-denniz-usb0.conf >/dev/null
+# MTK gen4m firmware keeps transmitting with its own (NVRAM) MAC: a NM-randomized MAC makes 802.11 auth time out.
+printf '[device]\nwifi.scan-rand-mac-address=no\n\n[connection]\nwifi.cloned-mac-address=permanent\nwifi.powersave=2\n' | \
+  sudo -n tee $R/etc/NetworkManager/conf.d/91-denniz-mac.conf >/dev/null
 sudo -n tar -C $R --numeric-owner --exclude=./proc/* --exclude=./sys/* --exclude=./dev/* --exclude=./boot/* \
   --exclude=./lib/modules/* --exclude=./usr/lib/modules/* -czf $N/images/pmos-root.tgz .
 sudo -n chown pmos: $N/images/pmos-root.tgz; ls -la $N/images/pmos-root.tgz

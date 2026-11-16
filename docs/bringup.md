@@ -96,6 +96,37 @@ pmbootstrap notes: the config key for the init system is `service_manager` (`def
 `ssh_key_glob` (`~/.ssh/*.pub`) copies every public key of the build user, so point it at one dedicated key.
 NetworkManager is told to leave `usb0` alone, because the initramfs already configured it.
 
+## 9. Wi-Fi (2026-11-16)
+The MT6891-Mainline tree carries MediaTek's downstream connectivity stack for the MT6893 (`conninfra` +
+`wlan_drv_gen4m`, chip `soc3_0`, AXI bus, "CONNAC2" WFDMA). It is SoC-level, so the chopin DT nodes work on denniz
+unchanged. The firmware comes from the phone's own backup (`vendor` inside `super`, read with `scripts/lpinfo.py`
+and debugfs, nothing mounted; the NVRAM blob `WIFI` from `nvdata`), packed by `scripts/wifi-fw.sh`. None of it is in
+this repository.
+
+Lessons, in the order they showed up:
+1. The firmware and the NVRAM blob must be in the **initramfs**: the driver probes within ~12 s of boot, and a late
+   NVRAM blob makes power-on and pre-calibration race (retries, `RST_DRV_OWN_FAIL`, bus hang).
+2. In a tarball unpacked over pmOS, use `usr/lib/firmware` (pmOS has `/lib -> usr/lib`; a `lib/` entry replaces the
+   symlink and the system loses `/sbin/init`).
+3. NetworkManager's MAC randomization breaks authentication (the firmware transmits with the NVRAM MAC): set
+   `wifi.scan-rand-mac-address=no` and `wifi.cloned-mac-address=permanent`.
+4. The driver's debug output is compiled out in user builds (`BUILD_QA_DBG=0`, also needed by conninfra). The patch
+   adds `DENNIZ_WLAN_LOG` to keep the printing; raise levels per module with
+   `echo 0xMODULE:0xLEVEL > /proc/net/wlan/dbgLevel`.
+5. **The real bug.** Scan and association worked, DHCP even worked on an open network, but no unicast frame and no
+   WPA handshake message 2 ever left. After ~8 data frames the TX-done, command-done and event interrupts stopped,
+   followed ~45 s later by a scan timeout and a whole-chip reset. Dumping the host WFDMA registers with `devmem2`
+   (`scripts/wfdma-devmem.sh`; chip address `0x7c02xxxx` = physical `0x1802xxxx`) showed host WFDMA1 **TX ring 2
+   with BASE = 0 and CNT = 0x200 (reset values) but CPU index 2**. `soc3_0` declares a third data ring for
+   "priority" frames (ARP, EAPOL, …): the first such frame made the DMA engine fetch descriptors from address 0 and
+   hang. The register accepts a value written by hand, so the driver simply never programs it on this setup. The
+   patch sets `tx_ring2_data_idx = 0`, so those frames use ring 0.
+   (A 32-bit DMA mask with 12 GB of RAM looked suspicious first, but all rings and buffers live in
+   `wifi-reserve-memory`, below 4 GB.)
+
+Result: WPA2 connects on the first try, 0 % ping loss, about 700 Mbit/s TCP in each direction on 5 GHz.
+`scripts/nat-usb.sh` (NAT on the host over the USB link) was the stop-gap for internet before that.
+
 ## Reading a failed boot
 Flash TWRP back to `recovery`, boot it, dump `expdb` (`scripts/dump-chunked.sh OUT expdb:/dev/block/sdc8`) and run
 `strings`: LK's log and the kernel log are there. pstore is overwritten by the Android boot in between.

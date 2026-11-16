@@ -11,7 +11,7 @@ It is a personal hobby project, not an official postmarketOS port.
 > keep a full partition backup, and never write the IMEI/calibration partitions (`nvram`, `nvdata`, `nvcfg`,
 > `protect1/2`, `persist`, `proinfo`, `md*`). No vendor firmware or partition images are included.
 
-## Status (2026-11-15)
+## Status (2026-11-16)
 
 | Step | State |
 |---|---|
@@ -22,7 +22,9 @@ It is a personal hobby project, not an official postmarketOS port.
 | USB device mode (configfs gadget: ECM + ACM root shell) | **done** |
 | UFS storage (all LUNs visible) | **done** |
 | postmarketOS rootfs (systemd) booted from RAM + SSH over USB | **done** |
-| Kernel config for server use (nftables, Docker, zram, RTC) | next |
+| Kernel config for server use (nftables, Docker, policy routing, WireGuard) | **done** (zram backends in test) |
+| **Wi-Fi** (MT6893 CONNAC2 `soc3_0`, WPA2, ~700 Mbit/s TCP) | **done** (RAM boot) |
+| RTC (MT6359 keeps Android's encoding) | open |
 | Production install in `boot`, charging limit, USB host/Ethernet, Docker … | planned |
 
 The display is not driven yet (command-mode Samsung AMOLED); the LK boot logo stays on screen.
@@ -61,6 +63,9 @@ Key facts (details in the notes):
 | `initramfs-usb/`, `scripts/mk-initramfs.sh` | First-boot initramfs (USB gadget 18d1:d001, root shell on ACM, safety reboot) |
 | `scripts/slot-test.sh`, `acm-run.sh` | Flash-and-boot test cycle and the host side of the USB shell |
 | `scripts/pmos-rootfs.sh`, `pmos-ram.sh` | Build a pmOS rootfs tarball with pmbootstrap; boot it from RAM over USB and SSH in |
+| `scripts/wifi-fw.sh`, `lpinfo.py` | Wi-Fi firmware + NVRAM from the phone's own `super`/`nvdata` backup (never published) |
+| `scripts/wifi-ping-test.sh`, `wfdma-devmem.sh`, `eapol-test.sh` | Wi-Fi tests: connect + ping, host WFDMA ring dump, WPA capture |
+| `scripts/nat-usb.sh`, `cycle.sh`, `tput.py` | Internet over USB via NAT on the host, reboot-and-retest cycle, TCP throughput |
 | `scripts/brom-test.sh` | Read-only BROM check with mtkclient |
 | `scripts/dump-*.sh`, `twrp-to-recovery.sh` | Partition backup from TWRP (chunked, sha256-verified) |
 | `scripts/dtpaths.py` | Node/compatible/status listing to diff two decompiled device trees |
