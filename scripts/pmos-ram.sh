@@ -37,10 +37,25 @@ for i in $(seq 60); do
     echo "SSH UP"
     # Everything is built in, but modprobe (zramstart, systemd-modules-load) needs /lib/modules/$(uname -r) to know.
     B=$N/src/build-denniz
-    tar -C $B -czf - modules.builtin modules.builtin.modinfo modules.order 2>/dev/null | \
+    # Full kernel: ship all modules (build-kernel.sh -> modules.tgz, usr/lib/modules/<ver>); old builds without it
+    # only get the modules.builtin* lists (modprobe of built-in features needs /lib/modules/$(uname -r) to exist).
+    if [ -f $B/modules.tgz ]; then cat $B/modules.tgz
+    else tar -C $B --transform 's,^,usr/lib/modules/KVER/,' -czf - modules.builtin modules.builtin.modinfo modules.order 2>/dev/null; fi | \
       ssh -i $K -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR user@172.16.42.1 'cat > /tmp/kmod.tgz'
     ssh -i $K -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR user@172.16.42.1 \
-      "sudo -S -p '' sh -c 'M=/lib/modules/\$(uname -r); mkdir -p \$M && tar -C \$M -xzf /tmp/kmod.tgz && depmod && systemctl restart postmarketos-zram-swap; swapon --show=NAME,SIZE --noheadings'" < ~/oneplusnord2-password.txt
+      "sudo -S -p '' sh -c 'cd / && tar -xzf /tmp/kmod.tgz && rm /tmp/kmod.tgz && { [ -d usr/lib/modules/KVER ] && mv usr/lib/modules/KVER usr/lib/modules/\$(uname -r) || true; } && depmod && echo modules: \$(find /lib/modules/\$(uname -r) -name \\*.ko\\* | wc -l) && systemctl restart postmarketos-zram-swap; swapon --show=NAME,SIZE --noheadings'" < ~/oneplusnord2-password.txt
+    # Project config + helper scripts: NM Wi-Fi-first route metrics, usb-mode.sh, mp2650-dump.sh (/usr/local/sbin)
+    S=$(mktemp -d); mkdir -p $S/etc/NetworkManager/conf.d $S/usr/local/sbin
+    cp $N/repo/config/50-denniz-route-metric.conf $S/etc/NetworkManager/conf.d/
+    for f in usb-mode mp2650-dump charge-limit; do install -m 755 $N/repo/scripts/$f.sh $S/usr/local/sbin/$f; done
+    mkdir -p $S/etc/systemd/system/multi-user.target.wants   # charge-limit.service (45-65 %), enabled
+    cp $N/repo/config/charge-limit.service $S/etc/systemd/system/
+    ln -s ../charge-limit.service $S/etc/systemd/system/multi-user.target.wants/charge-limit.service
+    cp $N/repo/config/machine-info $S/etc/machine-info   # bluez name (else "QEMU aarch64" from DMI)
+    tar -C $S --owner=0 --group=0 -czf - etc usr | ssh -i $K -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+      -o LogLevel=ERROR user@172.16.42.1 'cat > /tmp/extra.tgz'; rm -rf $S
+    ssh -i $K -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR user@172.16.42.1 \
+      "sudo -S -p '' sh -c 'tar -C / -xzf /tmp/extra.tgz && rm /tmp/extra.tgz && nmcli general reload conf; systemctl daemon-reload; command -v i2cset >/dev/null && systemctl start charge-limit; systemctl try-restart bluetooth; true'" < ~/oneplusnord2-password.txt && echo "extra config installed"
     WP=$N/firmware-vendor/private/home-wifi.nmconnection   # private Wi-Fi profile (wifi-connect.sh), if any
     if [ -f $WP ] && [ -z "${NOWIFI:-}" ]; then   # NOWIFI=1: leave it out (e.g. to capture the first attempt)
       ssh -i $K -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR user@172.16.42.1 \

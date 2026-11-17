@@ -9,6 +9,10 @@ N=/srv/nord2-pmos; K=$N/src/linux-mt6893; cd $K
 git rev-parse --verify -q denniz >/dev/null || git checkout -q -b denniz
 git config user.name >/dev/null || git config user.name "nord2-build"
 git config user.email >/dev/null || git config user.email "nord2-build@localhost"
+# i2c10..13 have no APDMA channel (vendor: "mediatek,fifo_only"): FIFO/PIO mode in i2c-mt65xx (MP2650 charger on i2c11)
+python3 $N/repo/scripts/patch-i2c-fifo.py $K > /dev/null
+# gen4m: station GTK in WTBL[BssIndex] (else the chip drops all WPA2 broadcast/multicast RX)
+python3 $N/repo/scripts/patch-wifi-gtk-wtbl.py $K > /dev/null
 python3 $N/repo/scripts/mk-denniz-dts.py arch/arm64/boot/dts/mediatek/mt6893-xiaomi-chopin.dts \
   $N/tests/twrp-hwinfo-20261114/live.dts arch/arm64/boot/dts/mediatek/mt6893-oneplus-denniz.dts
 grep -q oneplus-denniz arch/arm64/boot/dts/mediatek/Makefile || \
@@ -36,8 +40,8 @@ sed -i 's/^\t\.tx_ring2_data_idx = 2,$/\t.tx_ring2_data_idx = 0, \/* denniz: rin
 grep -q "tx_ring2_data_idx = 0, /\* denniz" $W/chips/soc3_0/soc3_0.c
 C=arch/arm64/configs/denniz_defconfig; cp arch/arm64/configs/chopin_defconfig $C
 off() { for o in "$@"; do sed -i -E "/^(# )?CONFIG_$o[= ]/d" $C; echo "# CONFIG_$o is not set" >> $C; done; }
-off DRM_MEDIATEK DRM_MEDIATEK_V2 DRM_PANEL_K10A_36_02_0A TOUCHSCREEN_NT36xxx_HOSTDL_SPI MTK_BOOT_PROGRESS_FB MTK_SCP_CHOPIN MTK_TINYSYS_SCP_SUPPORT MTK_SENSORHUB MTK_BTIF
-# MTK_COMBO (CONNAC2 soc3_0 Wi-Fi) stays on: firmware + nvdata WIFI blob come from scripts/wifi-fw.sh. BT (BTIF) later.
+off DRM_MEDIATEK DRM_MEDIATEK_V2 DRM_PANEL_K10A_36_02_0A TOUCHSCREEN_NT36xxx_HOSTDL_SPI MTK_BOOT_PROGRESS_FB MTK_SCP_CHOPIN MTK_TINYSYS_SCP_SUPPORT MTK_SENSORHUB
+# MTK_COMBO (CONNAC2 soc3_0 Wi-Fi + BT over BTIF) stays on: firmware + nvdata WIFI/BT_Addr come from scripts/wifi-fw.sh.
 off RTC_SYSTOHC   # Android keeps the MT6359 RTC in its own encoding (mainline reads 2069): never write it from Linux
 off USB_G_SERIAL   # legacy g_serial grabs the UDC before our configfs gadget (seen on the first boot)
 sed -i -E '/^CONFIG_USB_CONFIGFS=/d; /^CONFIG_CONFIGFS_FS=/d' $C; echo CONFIG_USB_CONFIGFS=y >> $C; echo CONFIG_CONFIGFS_FS=y >> $C
@@ -55,10 +59,21 @@ on NETFILTER NETFILTER_ADVANCED NF_CONNTRACK NF_NAT NF_TABLES NF_TABLES_INET NF_
    CGROUP_BPF CGROUP_HUGETLB CGROUP_PERF CGROUP_NET_PRIO CGROUP_NET_CLASSID NET_CLS_CGROUP CFS_BANDWIDTH \
    IP_MULTIPLE_TABLES IPV6_MULTIPLE_TABLES IP_ADVANCED_ROUTER WIREGUARD TUN \
    ZRAM ZSMALLOC ZRAM_BACKEND_LZ4 ZRAM_BACKEND_ZSTD CRYPTO_LZ4 CRYPTO_ZSTD I2C_CHARDEV BTRFS_FS BTRFS_FS_POSIX_ACL F2FS_FS \
-   USB_USBNET USB_NET_CDCETHER USB_RTL8152 USB_NET_AX88179_178A IKCONFIG IKCONFIG_PROC
+   USB_USBNET USB_NET_CDCETHER USB_RTL8152 USB_NET_AX88179_178A IKCONFIG IKCONFIG_PROC \
+   USB_UAS EXFAT_FS NTFS3_FS NLS_UTF8 \
+   BT BT_BREDR BT_LE MTK_BTIF MTK_COMBO_BT \
+   DRM_PANFROST COMMON_CLK_MT6893_PG BT_RFCOMM BT_RFCOMM_TTY BT_BNEP BT_HIDP \
+   BLK_DEV_THROTTLING
+# Display (work in progress, opt-in): mediatek_v2 stack + the denniz AMS643YE05 cmd-mode panel driver
+if [ "${DENNIZ_DISPLAY:-0}" = 1 ]; then
+  python3 $N/repo/scripts/patch-display.py $K $N/repo > /dev/null
+  python3 $N/repo/scripts/patch-display-cputrig.py $K > /dev/null
+  sed -i -E '/^(# )?CONFIG_(DRM_MEDIATEK|DRM_MEDIATEK_V2|DRM_PANEL_ONEPLUS_DENNIZ)[= ]/d' $C
+  printf 'CONFIG_DRM_MEDIATEK=y\nCONFIG_DRM_MEDIATEK_V2=y\nCONFIG_DRM_PANEL_ONEPLUS_DENNIZ=y\n' >> $C
+fi
 sed -i -E '/^CONFIG_CMDLINE=/d' $C
 echo 'CONFIG_CMDLINE="console=tty0 earlycon=mtk8250,mmio32,0x11002000 clk_ignore_unused regulator_ignore_unused pd_ignore_unused ignore_loglevel panic=5 printk.devkmsg=on log_buf_len=4194304 pstore.kmsg_bytes=262144 ramoops.mem_address=0x48090000 ramoops.mem_size=0x8f000 ramoops.record_size=0x1000 ramoops.console_size=0x40000 ramoops.ftrace_size=0 ramoops.pmsg_size=0 rdinit=/init"' >> $C
-git add -A $W/chips/soc3_0/soc3_0.c $W/os/linux/gl_kal.c $W/os/linux/include/gl_kal.h $W/Makefile arch/arm64/boot/dts/mediatek/mt6893-oneplus-denniz.dts arch/arm64/boot/dts/mediatek/Makefile \
+git add -A drivers/i2c/busses/i2c-mt65xx.c drivers/gpu/drm/panel drivers/gpu/drm/mediatek/mediatek_v2/mtk_drm_crtc.c $W/mgmt/privacy.c $W/chips/soc3_0/soc3_0.c $W/os/linux/gl_kal.c $W/os/linux/include/gl_kal.h $W/Makefile arch/arm64/boot/dts/mediatek/mt6893-oneplus-denniz.dts arch/arm64/boot/dts/mediatek/Makefile \
   arch/arm64/kernel/chopin-board.dts arch/arm64/kernel/head.S drivers/misc/mtk-logstore-console.c $C
 git commit -q -m "denniz: OnePlus Nord 2 5G first-boot board tree and config" && git log --oneline -2
 git diff HEAD~1 --stat

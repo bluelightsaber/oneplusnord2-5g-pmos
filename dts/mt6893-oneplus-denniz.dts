@@ -3527,11 +3527,13 @@
 	/delete-property/ mediatek,eint-keep-unmasked;
 };
 
-/* USB 2.0 device mode only: no role switch, never drive the MT6360 OTG boost. */
+/* USB 2.0 dual role, switched by hand from userspace (/sys/class/usb_role, scripts/usb-mode.sh): no Type-C
+ * controller driver (the MT6360 on i2c5 stays off), device mode by default. Never drive VBUS: the OTG boost on
+ * denniz is the MP2650 charger's, and in host mode the power comes from a powered hub. */
 &{/usb@11201000} {
-	dr_mode = "peripheral";
-	/delete-property/ usb-role-switch;
-	/delete-property/ role-switch-default-mode;
+	dr_mode = "otg";
+	usb-role-switch;
+	role-switch-default-mode = "peripheral";
 	/delete-property/ vbus-supply;
 };
 
@@ -3548,3 +3550,19 @@
 		reg = <0x55>;
 	};
 };
+&i2c10 {
+	clocks = <&imp_iic_wrap_c 1>;
+};
+
+&i2c11 {
+	clocks = <&imp_iic_wrap_c 2>;
+};
+
+&i2c12 {
+	clocks = <&imp_iic_wrap_c 3>;
+};
+
+&i2c13 {
+	clocks = <&imp_iic_wrap_c 4>;
+};
+

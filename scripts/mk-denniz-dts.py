@@ -11,7 +11,8 @@ SoC/PMIC side and replaces only what is board specific or dangerous:
   - USB is peripheral-only (no role switch, no VBUS boost).
 Usage: mk-denniz-dts.py CHOPIN_DTS DENNIZ_LIVE_DTS OUT_DTS
 """
-import re, sys
+import os, re, sys
+DISPLAY = os.environ.get('DENNIZ_DISPLAY') == '1'   # opt-in display bring-up
 
 def block(text, header_re):
     """Return (start, end) of the node whose header line matches header_re (end is after its '};\\n')."""
@@ -63,8 +64,8 @@ src += '''
 /* ===================== denniz: first-boot overrides ===================== */
 /* Board devices of the Xiaomi handset (or unknown wiring on denniz): off. */
 '''
-for lab in ['i2c0', 'i2c2', 'i2c4', 'i2c5', 'i2c6', 'i2c7', 'i2c8', 'i2c9', 'spi0', 'spi1', 'spi5', 'dsi0',
-            'xiaomi_touch', 'cp_qc30', 'usbpd_pm', 'sensor_hub', 'scp_start']:
+for lab in ['i2c0', 'i2c2', 'i2c4', 'i2c5', 'i2c6', 'i2c7', 'i2c8', 'i2c9', 'spi0', 'spi1', 'spi5']\
+           + ([] if DISPLAY else ['dsi0']) + ['xiaomi_touch', 'cp_qc30', 'usbpd_pm', 'sensor_hub', 'scp_start']:
     assert re.search(rf'\b{lab}:', src + open(chopin.replace('mt6893-xiaomi-chopin.dts', 'mt6893.dtsi')).read()), lab
     src += f'&{lab} {{\n\tstatus = "disabled";\n}};\n\n'
 src += '''/* EINT 12 is the chopin SCP sensor data-ready line (kept unmasked for the SCP firmware). On denniz no SCP
@@ -75,11 +76,13 @@ src += '''/* EINT 12 is the chopin SCP sensor data-ready line (kept unmasked for
 };
 
 '''
-src += '''/* USB 2.0 device mode only: no role switch, never drive the MT6360 OTG boost. */
+src += '''/* USB 2.0 dual role, switched by hand from userspace (/sys/class/usb_role, scripts/usb-mode.sh): no Type-C
+ * controller driver (the MT6360 on i2c5 stays off), device mode by default. Never drive VBUS: the OTG boost on
+ * denniz is the MP2650 charger's, and in host mode the power comes from a powered hub. */
 &{/usb@11201000} {
-	dr_mode = "peripheral";
-	/delete-property/ usb-role-switch;
-	/delete-property/ role-switch-default-mode;
+	dr_mode = "otg";
+	usb-role-switch;
+	role-switch-default-mode = "peripheral";
 	/delete-property/ vbus-supply;
 };
 
@@ -102,6 +105,40 @@ src += '''/* Fuel gauge: TI bq28z610 on i2c7 at 0x55, 100 kHz (from denniz's own
 		reg = <0x55>;
 	};
 };
+'''
+# i2c10..13 (FIFO-only controllers): the vendor clock indices are off by one against the mainline
+# imp_iic_wrap_c binding (vendor 2..5 = mainline AP_I2C11..AP_I2C13+1), so each bus gated its neighbour's
+# clock and every transfer timed out (seen on i2c11 = MP2650, 2026-11-16). Mainline ids: I2C10=1 .. I2C13=4.
+for n, cid in [(10, 1), (11, 2), (12, 3), (13, 4)]:
+    assert re.search(rf'\bi2c{n}: i2c{n}@', src + open(chopin.replace('mt6893-xiaomi-chopin.dts', 'mt6893.dtsi')).read()), n
+    src += f'&i2c{n} {{\n\tclocks = <&imp_iic_wrap_c {cid}>;\n}};\n\n'
+if DISPLAY:
+    assert re.search(r'^\t\tpanel@0 \{\n\t\t\tcompatible = "l16_36_02_0b_dsc_vdo,lcm";', src, re.M)
+    assert re.search(r'\bmtkfb: mtkfb \{', src)
+    src += '''/* Display: Samsung AMS643YE05 cmd-mode DSC panel on DSI0 (driver panel-oneplus-denniz-ams643ye05). The chopin
+ * panel@0 node is reused for its of_graph endpoint; reset is GPIO 42 on both boards. Power rails stay as LK left
+ * them, so no supplies here; brightness is DCS 0x51, so no backlight phandle. The chopin mtkfb pinctrl states
+ * (LCD bias/reset/TE GPIOs of the Xiaomi board) are dropped: denniz's TE (GPIO 41 mode 1) is muxed by LK. */
+&dsi0 {
+	status = "okay";
+	panel@0 {
+		compatible = "oneplus,denniz-ams643ye05";
+		/delete-property/ dvdd-supply;
+		/delete-property/ backlight;
+	};
+};
+
+&mtkfb {
+	/delete-property/ pinctrl-names;
+	/delete-property/ pinctrl-0;
+	/delete-property/ pinctrl-1;
+	/delete-property/ pinctrl-2;
+	/delete-property/ pinctrl-3;
+	/delete-property/ pinctrl-4;
+	/delete-property/ pinctrl-5;
+	/delete-property/ pinctrl-6;
+};
+
 '''
 open(out, 'w').write(src)
 print('wrote', out)

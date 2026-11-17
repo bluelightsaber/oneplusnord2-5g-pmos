@@ -12,7 +12,7 @@ F=$N/firmware-vendor/oos11-A20; mkdir -p $F; chmod 700 $F
 [ -f $F/vendor.img ] || python3 $N/repo/scripts/lpinfo.py $B/super.img vendor $F/vendor.img
 S=$(mktemp -d); trap "rm -rf $S" EXIT; L=$S/usr/lib/firmware; mkdir -p $L/mediatek/mt6893
 dbg() { /usr/sbin/debugfs -R "$1" "$2" 2>/dev/null; }
-for f in $(dbg "ls -p /firmware" $F/vendor.img | awk -F/ '{print $6}' | grep -E '^(soc3_0_|WIFI_RAM_CODE_soc3_0|conninfra\.cfg$)'); do
+for f in $(dbg "ls -p /firmware" $F/vendor.img | awk -F/ '{print $6}' | grep -E '^(soc3_0_|WIFI_RAM_CODE_soc3_0|conninfra\.cfg$|BT_FW\.cfg$)'); do
   dbg "dump /firmware/$f $L/$f" $F/vendor.img; done
 dbg "dump /firmware/wifi_$PRJ.cfg $L/wifi.cfg" $F/vendor.img
 # denniz mainline: keep the firmware awake (CAM). With power save, after a disconnect/idle period the firmware

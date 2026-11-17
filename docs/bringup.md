@@ -135,7 +135,64 @@ The phone's own tree calls it `oplus,bq27541-battery` at 0x55 on i2c7 (`11d03000
 `ti,bq28z610` at 100 kHz the mainline `bq27xxx_battery` driver reads it fine (2S pack, voltage, state of charge,
 cycle count, health, temperature). The chopin children of i2c7 (NFC, camera LDO) are deleted in the generated DT;
 0x68 on the same bus is the OnePlus charge pump and is left alone. The chargers themselves (MT6360, MPS MP2650,
-charge pump, fast-charge MCU) are not driven by Linux yet, so a charge limit is still open.
+charge pump, fast-charge MCU) have no Linux drivers; the charge limit (section 11) works at register level.
+
+## 11. i2c, charger and charge limit (2026-11-16)
+- Mainline `i2c-mt65xx` is DMA-only, but i2c10..13 have no APDMA channel: `scripts/patch-i2c-fifo.py` adds a
+  FIFO/PIO mode (up to 8 bytes per message, DT flag `mediatek,fifo_only`). The vendor DT clock indices for those
+  buses were also one too high for the mainline binding (each bus gated its neighbour's clock), fixed in the
+  generated DT.
+- The **MPS MP2650** charger (0x5c) is then readable (`scripts/mp2650-dump.sh`; register map from the OnePlus GPL
+  driver). LK leaves its watchdog off, so the `CHG_EN` bit can be toggled safely. `scripts/charge-limit.sh` +
+  `config/charge-limit.service` keep the battery between 45 and 65 % by writing only that bit; current, voltage
+  and the other chargers (MT6360, charge pump) are left as LK set them.
+- USB dual role: `dr_mode = "otg"` with a role switch; `scripts/usb-mode.sh host|device|try SECS` switches with a
+  timed fallback to device mode (a systemd timer, so it survives the SSH session that started it). The port is
+  USB 2.0 only, so NetworkManager prefers Wi-Fi (`config/50-denniz-route-metric.conf`).
+- Bluetooth: MTK BTIF + combo driver with the phone's own firmware; works with bluez.
+
+## 12. Wi-Fi: broadcast and ARP with PMF (2026-11-16)
+After the TX fix, WPA2 worked but the phone stopped receiving broadcast/multicast after a while: other hosts could
+not ARP it (the phone's own traffic was fine). Raising the RX debug level showed every group frame dropped as
+"plain text during security connection" with WLAN index 0, while the group key was correctly in WTBL entry 5.
+Dumping the hardware WTBL (`GET_WTBL` through `/proc/net/wlan/driver`) showed entry 0 holding the AP address with
+no cipher: with PMF the driver installs the IGTK (BIP) at the entry equal to the BSS index ("WTBL 0-3 reserved
+for BIP"), the firmware leaves that entry with the AP address, and the RX address search then matches group frames
+to it. `scripts/patch-wifi-gtk-wtbl.py` puts the station's group key in that same entry, next to the IGTK.
+Result, with PMF on: 40/40 test broadcasts received and a 60-minute idle ARP soak without a miss
+(`scripts/arp-idle-test.sh`). Note: `GET_WTBL` while the station is (re)associating crashed the phone; use it
+only on a stable connection.
+
+## 13. GPU: Mali-G77 MC9 (2026-11-16)
+The tree's panfrost works once the MFG power-domain clock provider (`COMMON_CLK_MT6893_PG`) is enabled:
+`mali-g77 id 0x9080`, 9 shader cores. Alpine's Mesa 26.3.0 does not know the G77, so `scripts/mesa-g77-*.sh`
+rebuild the same Mesa release on the phone (sources checked against Alpine's APKBUILD sums) with
+`scripts/mesa-g77-patch.py`:
+1. a Mali-G77 model entry (as in MT6891-Mainline's Mesa fork);
+2. v9 (job manager) compute jobs split across the cores like the CSF path does. Stock code used one task for the
+   whole grid, so OpenCL ran on a single core.
+
+Results: GLES 3.1 (`scripts/gles-tri.c`), Rusticl OpenCL 3.0 with 9 compute units and fp16. `scripts/cl-bench.c`
+reaches 159 GFLOPS fp32 ALU (19 before the split patch), 19.5 GB/s copy, and 12.7 GFLOPS for a simple tiled SGEMM,
+with results checked against the CPU. PanVK has no v9 support.
+
+## 14. Server stack (2026-11-17)
+The kernel config covers Docker (namespaces, cgroup v2 incl. block I/O throttling, overlayfs, veth, bridge,
+`nft_compat`), WireGuard and nftables. The rootfs (`scripts/pmos-rootfs.sh`) adds Docker, compose, buildx,
+postmarketOS' nftables rules for Docker and Tailscale (`config/52_tailscale.nft`). In a RAM boot Docker 29.10 runs
+with overlayfs, cgroup v2 and the systemd cgroup driver with no `docker info` warnings, containers reach the
+network, and tailscaled is up waiting for a login. `scripts/soak.sh` logs the health of a long run.
+
+## 15. Display: work in progress (2026-11-17)
+The panel is a Samsung AMS643YE05 (1080x2400 AMOLED, MIPI-DSI command mode, DSC 1.1, 4 lanes). LK initialises it
+and leaves its logo on screen. `kernel/panel-oneplus-denniz-ams643ye05.c` ports the OnePlus panel driver (init
+sequence and DSC parameters) to the tree's vendor `mediatek_v2` DRM; it adopts the panel as LK left it. Built only
+with `DENNIZ_DISPLAY=1`. The driver binds, `/dev/dri` and an fbcon framebuffer come up, and the console buffer is
+scanned out by the overlay engine. In command mode a frame only reaches the panel when the path is triggered.
+The vendor driver does that from a GCE (command queue) loop, which this tree does not have: its CMDQ is a stub that
+executes register writes at once. `scripts/patch-display-cputrig.py` re-triggers the path from a kernel work
+item instead. The triggers run, but the DSI host does not report a finished frame yet; next is keeping LK's
+dual-pipe setup and comparing the DSI/DSC sequence with the GCE loop.
 
 ## Reading a failed boot
 Flash TWRP back to `recovery`, boot it, dump `expdb` (`scripts/dump-chunked.sh OUT expdb:/dev/block/sdc8`) and run

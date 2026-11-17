@@ -1,0 +1,11 @@
+[Unit]
+Description=Battery charge limit (MP2650 CHG_EN, 45-65 %)
+After=multi-user.target
+
+[Service]
+ExecStart=/usr/local/sbin/charge-limit
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,13 @@
+#!/usr/sbin/nft -f
+# Tailscale on denniz (same as the 9 Pro): accept traffic from the tailnet and the WireGuard port.
+# Install: /etc/nftables.d/52_tailscale.nft
+table inet filter {
+	chain input {
+		iifname "tailscale0" accept comment "Allow incoming traffic from the tailnet"
+		udp dport 41641 accept comment "Tailscale WireGuard"
+	}
+
+	chain forward {
+		iifname "tailscale0" accept comment "Allow forwarded traffic from the tailnet"
+	}
+}

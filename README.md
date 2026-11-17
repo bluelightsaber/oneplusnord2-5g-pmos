@@ -11,7 +11,7 @@ It is a personal hobby project, not an official postmarketOS port.
 > keep a full partition backup, and never write the IMEI/calibration partitions (`nvram`, `nvdata`, `nvcfg`,
 > `protect1/2`, `persist`, `proinfo`, `md*`). No vendor firmware or partition images are included.
 
-## Status (2026-11-16)
+## Status (2026-11-17)
 
 | Step | State |
 |---|---|
@@ -23,12 +23,19 @@ It is a personal hobby project, not an official postmarketOS port.
 | UFS storage (all LUNs visible) | **done** |
 | postmarketOS rootfs (systemd) booted from RAM + SSH over USB | **done** |
 | Kernel config for server use (nftables, Docker, policy routing, WireGuard) | **done** |
-| **Wi-Fi** (MT6893 CONNAC2 `soc3_0`, WPA2, ~700 Mbit/s TCP) | **done** (RAM boot) |
-| Battery fuel gauge (TI bq28z610) | **done** (charger control: open) |
-| RTC (MT6359 keeps Android's encoding) | open |
-| Production install in `boot`, charging limit, USB host/Ethernet, Docker … | planned |
+| **Wi-Fi** (MT6893 CONNAC2 `soc3_0`, WPA2 + PMF, ~700 Mbit/s TCP, broadcast/ARP fixed) | **done** (RAM boot) |
+| Bluetooth (MTK BTIF, bluez) | **done** |
+| Battery fuel gauge (TI bq28z610) | **done** |
+| Charge limit 45–65 % (MPS MP2650 `CHG_EN` only, systemd service) | **done** |
+| USB dual role (host/device switch, `usb-mode`) | **done** (hub test pending) |
+| GPU: Mali-G77 MC9 with panfrost + patched Mesa (GLES 3.1, Rusticl OpenCL 3.0) | **done** |
+| Docker 29 + Tailscale + nftables | **done** (RAM boot) |
+| Display (Samsung AMS643YE05, DSI command mode + DSC) | in progress (driver ported, no frames yet) |
+| RTC (MT6359) | done (NTP) |
+| Persistent install on UFS, USB Ethernet hub | planned |
 
-The display is not driven yet (command-mode Samsung AMOLED); the LK boot logo stays on screen.
+The display is not driven yet by default (command-mode Samsung AMOLED); the LK boot logo stays on screen. A port
+of the OnePlus panel driver is in `kernel/` (opt-in build, see the notes).
 
 See [`docs/bringup.md`](docs/bringup.md) for the full log of findings and [`CHECKLIST.md`](CHECKLIST.md) for the
 roadmap.
@@ -68,6 +75,14 @@ Key facts (details in the notes):
 | `scripts/wifi-ping-test.sh`, `wfdma-devmem.sh`, `eapol-test.sh` | Wi-Fi tests: connect + ping, host WFDMA ring dump, WPA capture |
 | `scripts/nat-usb.sh`, `cycle.sh`, `tput.py` | Internet over USB via NAT on the host, reboot-and-retest cycle, TCP throughput |
 | `scripts/brom-test.sh` | Read-only BROM check with mtkclient |
+| `scripts/patch-wifi-gtk-wtbl.py`, `arp-idle-test.sh` | Wi-Fi group-key WTBL fix (broadcast/ARP with PMF) and its soak test |
+| `scripts/patch-i2c-fifo.py` | FIFO mode for the i2c controllers without an APDMA channel |
+| `scripts/charge-limit.sh`, `mp2650-dump.sh`, `config/charge-limit.service` | 45–65 % charge limit via the MP2650 `CHG_EN` bit, register dump |
+| `scripts/usb-mode.sh` | USB host/device role switch with automatic fallback |
+| `scripts/mesa-g77-*.sh`, `mesa-g77-patch.py`, `cl-bench.c`, `gles-tri.c` | Mesa with Mali-G77 support built on the phone, OpenCL/GLES tests |
+| `kernel/`, `scripts/patch-display*.py` | Work in progress: AMS643YE05 panel driver for the vendor `mediatek_v2` DRM, CPU frame trigger |
+| `config/` | NetworkManager route metrics (Wi-Fi first, Ethernet fallback), Tailscale firewall rule, Bluetooth name |
+| `scripts/soak.sh` | Long-running health log (ping, load, battery, temperatures, services) |
 | `scripts/dump-*.sh`, `twrp-to-recovery.sh` | Partition backup from TWRP (chunked, sha256-verified) |
 | `scripts/dtpaths.py` | Node/compatible/status listing to diff two decompiled device trees |
 
@@ -85,11 +100,16 @@ This work stands on other people's work:
 - **TWRP** — official `twrp-3.7.0_11-0-denniz` (<https://twrp.me>), used for the partition backup.
 - **OnePlus** — the official OxygenOS 11 rollback package (fastboot only exists on OOS 11 for this phone).
 - **BusyBox** (static aarch64) in the first-boot initramfs.
+- **OnePlus / OPPO kernel source** (GPL, `oneplus/MT6893_R_11.0`): the AMS643YE05 panel init sequence and DSC
+  parameters, the MP2650 charger register map, and the gen4m Wi-Fi driver this work patches.
+- **Mesa** / **panfrost** — <https://mesa3d.org>: our patch only adds the Mali-G77 model entry and splits v9 compute
+  jobs across the shader cores; the G77 entry follows MT6891-Mainline's Mesa fork.
+- **Docker**, **Tailscale**, **Alpine Linux** packages used as-is.
 - Community research on denniz (XDA, the unofficial LineageOS builds by ManshuTyagi) for the rollback/BROM path.
 - Methodology follows the author's sister project for the OnePlus 9 Pro:
   <https://github.com/bluelightsaber/oneplus9pro-postmarketos>.
 
 ## License
-- Kernel patch and device tree (`patches/kernel/`, `dts/`): **GPL-2.0-only**, like the Linux kernel
+- Kernel patch, device tree and kernel driver (`patches/kernel/`, `dts/`, `kernel/`): **GPL-2.0-only**, like the Linux kernel
   (`LICENSES/GPL-2.0`).
 - Everything else (scripts, initramfs, docs): **MIT** (`LICENSE`).
