@@ -1,0 +1,20 @@
+#!/bin/sh
+# Hold the power key HOLD s (default 4) => reboot into the recovery partition (rescue image).
+# Volume-down is failing on this unit, so this replaces the Vol-/Power key path for a running system.
+HOLD=4; [ -r /etc/powerkey-rescue.conf ] && . /etc/powerkey-rescue.conf
+D=""; for n in /sys/class/input/event*/device/name; do grep -q pmic-keys $n && D=/dev/input/$(basename ${n%/device/name}); done
+[ -n "$D" ] || { echo "no pmic-keys input"; exit 1; }
+T=""
+# struct input_event on arm64 = 24 bytes = 12 u16: [8]=type [9]=code [10]=value(low). evdev needs whole-event reads,
+# so keep one fd open and read exactly 24 bytes per event.
+exec 3< $D
+while ev=$(dd bs=24 count=1 status=none <&3 | od -An -v -tu2 -w24); do
+  set -- $ev; [ $# -ge 11 ] || continue
+  [ "$9" = 1 ] && [ "${10}" = 116 ] || continue
+  case ${11} in
+    1) [ -n "$T" ] && kill $T 2>/dev/null
+       ( sleep $HOLD; logger -t powerkey-rescue "power held ${HOLD}s: rebooting to recovery"
+         systemctl reboot --reboot-argument=recovery ) & T=$! ;;
+    0) [ -n "$T" ] && kill $T 2>/dev/null; T="" ;;
+  esac
+done

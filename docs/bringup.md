@@ -209,7 +209,8 @@ Two traps cost most of the time:
 
 `config/screen/`: `btop-console.service` (btop on tty1), `screen-idle` (blank after 1 h without input, SIGSTOP
 btop; any key wakes), `kernel.printk = 3 4 1 7` so kernel messages do not paint over btop, and logind ignoring a
-short power-key press (a long press still powers off).
+short power-key press. The long press is ignored too (§19): Linux poweroff hangs here, and a long hold is the
+manual reset path.
 
 ## 16. USB-C: hub, Ethernet, automatic role (2026-11-18)
 The port is USB 2.0 only (`mtu3` dual role + `xhci-mtk`). Forcing host mode
@@ -246,9 +247,68 @@ console. `init` now kills it before switching root.
 - systemd feeds the hardware watchdog (`RuntimeWatchdogSec=30s`); two out-of-memory hangs during large builds
   rebooted the phone on their own.
 - `scripts/wifi-ensure.sh`: the gen4m Wi-Fi driver can hang with a full TX ring (WFDMA1 TX0). The service pings the
-  gateway every 30 s and, after three misses, power-cycles the radio through `/dev/wmtWifi`.
+  gateway every 10 s and, after three misses, logs two dumps of the WFDMA0/1 ring registers plus link and
+  neighbour state to the journal, then power-cycles the radio (`nmcli radio wifi off`, a WMT power write through
+  `/dev/wmtWifi`, `nmcli radio wifi on`). Outage ≈ 40 s. See §21.
 - CPU inference with llama.cpp (Qwen2.5-0.5B Q4_K_M, 8 threads): 45 tokens/s prompt, 22 tokens/s generation. On
   the GPU, Rusticl's compiler (libclang 23) crashes on some ggml OpenCL kernels; not pursued.
+
+## 18. Persistent install (2026-11-18)
+Plan: keep Android's partition layout (no repartitioning) and reuse the two big partitions.
+1. **Backup.** `scripts/full-backup.sh` runs from the RAM system: `sfdisk -d/-l` of every LUN, the first and last
+   MiB of each LUN (primary and backup GPT), whole `sda`/`sdb` (preloader), every `sdc` partition, sha256 on the
+   phone and on the host for each image. The 226 GiB `userdata` was streamed later over Wi-Fi with `zstd -1 -T6` on
+   the phone (raw sha256 through a fifo): 3.1 GB, verified.
+2. **Root on `super`.** `scripts/persist-rootfs.sh` formats `super` (the dynamic-partition container with
+   system/vendor/product; ~10 GiB) as btrfs `pmos-root`, subvolume `@`, and rsyncs the running, tested RAM system
+   into it (no CoW for `/var/log`, persistent journal capped at 50 MB). This removes Android.
+3. **Persistent initramfs.** `PMOS_ROOT=super scripts/mk-initramfs.sh` writes `/pmos_root` into the initramfs:
+   `init` finds the partition by `PARTNAME`, mounts `subvol=@` and `switch_root`s. If that fails it stays in the
+   initramfs with the USB shell. The image went to `recovery` first (`fastboot reboot recovery` → first persistent
+   boot), then, once that worked, to `boot`. `recovery` keeps the same known-good image as the rescue path.
+4. **Data disk.** `scripts/persist-data.sh` formats `userdata` as btrfs `pmos-data` with subvolumes `@data`,
+   `@docker`, `@containerd` mounted at `/data`, `/opt/docker` (Docker `data-root`) and `/var/lib/containerd`
+   (Docker 29's containerd image store), `compress=zstd:1`, `nofail` and a 20 s device timeout so a broken data disk
+   never blocks the boot; Docker and containerd get `RequiresMountsFor`.
+
+A normal boot takes ~2 minutes: LK sits ~90 s with the panel off before the logo (not investigated yet; a
+recovery-mode boot of the same image takes ~6 s). The phone boots and joins Wi-Fi with no cable attached.
+
+Updates: the rootfs is a regular postmarketOS install (`apk upgrade`). Our kernel and modules are not managed by
+apk (the generic kernel package only writes to `/boot`, which LK never reads), so updates do not touch them.
+
+## 19. Reboot target from Linux (2026-11-18)
+LK reads the reboot reason from the **TOPRGU `nonrst2` register (0x10007024, low nibble)**. The map comes from
+LK's own embedded device tree (`/watchdog@10007000/reboot-mode`, `syscon-reboot-mode`, offset 0x24, mask 0xf):
+charger 1, **recovery 2**, **bootloader 3**, kpoc 5, meta 7, kernel 9, ftm 0xe. Results with `devmem2` + reboot:
+- **2 → LK boots `recovery`** in ~6 s.
+- **3 → LK hangs** with the panel off for ~90 s, then the hardware watchdog resets it into recovery. USB never
+  enumerates, so there is no software path to fastboot; fastboot still needs Vol− + Power from power-off.
+- 0 or 9 → normal boot (`boot`).
+
+`config/reboot/denniz-reboot-mode` is a systemd-shutdown hook: on reboot it takes `systemctl reboot
+--reboot-argument=recovery|bootloader|normal` (or `/etc/denniz-reboot-default`) and sets the nibble. The kernel has
+`CONFIG_SYSCON_REBOOT_MODE`, so the same node could go into the board DT later.
+
+`config/reboot/powerkey-rescue`: hold power for 4 s → reboot into recovery (reads the `mt6359` pmic-keys event
+device; logind ignores the long press). Holding ~15 s still triggers the PMIC hardware reset. Linux poweroff does
+not cut power on this board (it hangs), so the banner says to reboot instead.
+
+## 20. SSH welcome banner (2026-11-18)
+`config/motd/99-denniz-welcome.sh` (installed as `/etc/profile.d/99-denniz-welcome.sh`, interactive SSH only, once
+per login, `~/.hushlogin` skips it): kernel, uptime, battery and charge state, hottest thermal zone, load, IP
+addresses, disk usage of `/` and `/data`, Docker counts, then a short "how this server works" (storage, Docker
+folders, `apk` updates, network tools, USB-C roles, power key, reboot/rescue, battery limit, logs).
+`pmos-rootfs.sh` installs it (`WELCOME_LANG=es` for the Spanish version).
+
+## 21. Wi-Fi TX hang (open, 2026-11-18)
+Symptom: the gateway becomes unreachable and the WFDMA1 TX0 ring stops moving; wifi-ensure recovers it. Hangs seen
+after ~1 h of sustained TX, but also once 5 minutes after boot with almost no traffic. The kernel message
+`halCheckHifState: Tx timeout` means an MSDU token has been in use longer than the report timeout (checked every
+perf-monitor tick); after a hang one token stays leaked and the message repeats every second while traffic works,
+so it is not a hang by itself. 802.11 power save is already off. All hangs so far were on 5 GHz at high rates; after
+a radio cycle the link came back on 2.4 GHz and survived long stress runs. Next: confirm the band dependency and
+read the ring dumps from the next hang.
 
 ## Reading a failed boot
 Flash TWRP back to `recovery`, boot it, dump `expdb` (`scripts/dump-chunked.sh OUT expdb:/dev/block/sdc8`) and run

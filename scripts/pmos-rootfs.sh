@@ -57,6 +57,19 @@ sudo -n install -m 644 $S/btop-console.service $S/screen-idle.service $R/etc/sys
 echo "TIMEOUT=3600" | sudo -n tee $R/etc/screen-idle.conf >/dev/null
 for u in btop-console screen-idle; do sudo -n ln -sfn ../$u.service $R/etc/systemd/system/multi-user.target.wants/$u.service; done
 sudo -n rm -f $R/etc/systemd/system/getty.target.wants/getty@tty1.service
+# reboot target for MediaTek LK (TOPRGU nonrst2) as a systemd-shutdown hook + hold power 4 s => reboot to recovery.
+# Default target "recovery" while `boot` is not ours; set /etc/denniz-reboot-default to "normal" after flashing boot.
+B=$N/repo/config/reboot
+sudo -n install -D -m 755 $B/denniz-reboot-mode $R/usr/local/sbin/denniz-reboot-mode
+sudo -n mkdir -p $R/usr/lib/systemd/system-shutdown
+sudo -n ln -sfn /usr/local/sbin/denniz-reboot-mode $R/usr/lib/systemd/system-shutdown/denniz-reboot-mode
+sudo -n install -D -m 755 $B/powerkey-rescue $R/usr/local/bin/powerkey-rescue
+sudo -n install -m 644 $B/powerkey-rescue.service $R/etc/systemd/system/
+sudo -n ln -sfn ../powerkey-rescue.service $R/etc/systemd/system/multi-user.target.wants/powerkey-rescue.service
+echo "${REBOOT_DEFAULT:-recovery}" | sudo -n tee $R/etc/denniz-reboot-default >/dev/null
+# SSH login banner (live status + how the server works)
+sudo -n install -D -m 644 $N/repo/config/motd/99-denniz-welcome${WELCOME_LANG:+.$WELCOME_LANG}.sh $R/etc/profile.d/99-denniz-welcome.sh
+sudo -n truncate -s 0 $R/etc/motd 2>/dev/null || true
 sudo -n tar -C $R --numeric-owner --exclude=./proc/* --exclude=./sys/* --exclude=./dev/* --exclude=./boot/* \
   --exclude=./lib/modules/* --exclude=./usr/lib/modules/* -czf $N/images/pmos-root.tgz .
 sudo -n chown pmos: $N/images/pmos-root.tgz; ls -la $N/images/pmos-root.tgz

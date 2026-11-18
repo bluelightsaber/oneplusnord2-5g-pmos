@@ -1,0 +1,10 @@
+[Unit]
+Description=Hold the power key to reboot into recovery (rescue)
+
+[Service]
+ExecStart=/usr/local/bin/powerkey-rescue
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

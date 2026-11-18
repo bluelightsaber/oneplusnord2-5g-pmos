@@ -4,6 +4,7 @@
 # /dev/ttyGS0 (host: /dev/ttyACM0). Read-only: mounts nothing from UFS.
 # Safety: reboot -f after $WAIT s (default 300) unless /tmp/keep exists -> LK boots Android normally.
 # /tmp/switchroot (written by the host) switches into a rootfs unpacked in /newroot.
+# Persistent mode: /pmos_root (or pmos_root=NAME) mounts that partition's btrfs subvolume @ as root instead.
 /bin/busybox --install -s /bin
 export PATH=/bin
 mount -t proc proc /proc
@@ -44,6 +45,23 @@ GS_LOOP=$!
 log "shell on ttyGS0"
 # RAM boot of a full rootfs without flashing (scripts/pmos-ram.sh): the host unpacks it into /newroot and writes
 # the init path into /tmp/switchroot; then PID 1 (us) moves the mounts and switches. Gadget + usb0 IP stay.
+# Persistent install: root partition name from /pmos_root (persistent initramfs) or pmos_root= on the cmdline;
+# btrfs, subvolume @. Any failure keeps the RAM-boot path above alive (USB shell, no safety reboot).
+PR=$(sed -n 's/.*pmos_root=\([^ ]*\).*/\1/p' /proc/cmdline); [ -z "$PR" ] && [ -r /pmos_root ] && PR=$(cat /pmos_root)
+if [ -n "$PR" ] && [ "$PR" != none ]; then
+  DEV=""
+  for i in $(seq 1 15); do
+    for u in /sys/class/block/*/uevent; do grep -qx "PARTNAME=$PR" $u && DEV=/dev/$(basename ${u%/uevent}); done
+    [ -n "$DEV" ] && break; sleep 1
+  done
+  mkdir -p /newroot
+  if [ -n "$DEV" ] && mount -t btrfs -o noatime,subvol=@ $DEV /newroot && [ -e /newroot/sbin/init ]; then
+    log "persistent root: $PR = $DEV"; touch /tmp/keep; echo /sbin/init > /tmp/switchroot
+  else
+    umount /newroot 2>/dev/null; touch /tmp/keep
+    log "persistent root $PR ($DEV) FAILED: staying in the initramfs, waiting for a RAM rootfs"
+  fi
+fi
 while [ ! -e /tmp/switchroot ]; do sleep 2; done
 log "switch_root to /newroot ($(cat /tmp/switchroot))"
 for m in dev proc sys; do mkdir -p /newroot/$m; mount --move /$m /newroot/$m; done

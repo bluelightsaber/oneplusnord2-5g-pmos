@@ -23,17 +23,22 @@ It is a personal hobby project, not an official postmarketOS port.
 | UFS storage (all LUNs visible) | **done** |
 | postmarketOS rootfs (systemd) booted from RAM + SSH over USB | **done** |
 | Kernel config for server use (nftables, Docker, policy routing, WireGuard) | **done** |
-| **Wi-Fi** (MT6893 CONNAC2 `soc3_0`, WPA2 + PMF, ~700 Mbit/s TCP, broadcast/ARP fixed) | **done** (RAM boot) |
+| **Wi-Fi** (MT6893 CONNAC2 `soc3_0`, WPA2 + PMF, ~700 Mbit/s TCP, broadcast/ARP fixed) | **done**; rare TX hang, auto-recovered in ~40 s (under investigation) |
 | Bluetooth (MTK BTIF, bluez) | **done** |
 | Battery fuel gauge (TI bq28z610) | **done** |
 | Charge limit 45–65 % (MPS MP2650 `CHG_EN` only, systemd service) | **done** |
 | USB-C: MT6360 TCPC + TCPM, USB-PD sink (5 V only), automatic host/device role (PD data-role swap) | **done** |
 | USB hub: RTL8153 Gigabit Ethernet (Wi-Fi first, Ethernet fallback), USB storage, phone powered by the hub | **done** |
 | GPU: Mali-G77 MC9 with panfrost + patched Mesa (GLES 3.1, Rusticl OpenCL 3.0) | **done** |
-| Docker 29 + Tailscale + nftables | **done** (RAM boot) |
+| Docker 29 + Tailscale + nftables (Docker data on the data disk) | **done** |
 | Panel console: btop in landscape on the LK framebuffer (simpledrm + frame pusher), 1 h blank, key wake | **done** |
 | RTC (MT6359) | done (NTP) |
-| Persistent install on UFS | planned |
+| **Persistent install on UFS**: btrfs root on `super`, our kernel in `boot`, rescue image in `recovery` | **done** |
+| Data disk: `userdata` as btrfs (`/data`, `/opt/docker`, `/var/lib/containerd`) | **done** |
+| Software reboot into recovery (LK reboot-mode register), hold power 4 s = reboot to recovery | **done** |
+| SSH welcome banner (live status + how the server works) | **done** |
+| Software reboot into fastboot | not possible (LK hangs; watchdog → recovery) |
+| Power off from Linux | hangs (does not cut power); hold power ~15 s |
 
 The panel shows a `btop` console: LK leaves the display pipeline running, the kernel draws into LK's framebuffer
 with simpledrm, and a small built-in driver (`kernel/denniz-lkfb.c`) pushes a frame to the command-mode panel twice
@@ -43,6 +48,16 @@ See [`docs/bringup.md`](docs/bringup.md) for the full log of findings and [`CHEC
 roadmap.
 
 ## How it boots
+
+The installed system (since 2026-11-18):
+
+```
+BROM → preloader → LK → boot.img v2 from `boot`     → initramfs mounts btrfs `super` (subvol @) → systemd
+                      → same image in `recovery`    → rescue path (power held 4 s, or `--reboot-argument=recovery`)
+userdata = btrfs data disk: /data, /opt/docker, /var/lib/containerd
+```
+
+During the bring-up everything was tested from the `recovery` slot first:
 
 ```
 BROM → preloader → LK (MediaTek little kernel) → boot.img v2 from the `recovery` partition
@@ -88,6 +103,10 @@ Key facts (details in the notes):
 | `scripts/wifi-ensure.sh`, `config/wifi-ensure.service` | Wi-Fi watchdog: power-cycles the radio after a TX hang |
 | `kernel/panel-*.c`, `scripts/patch-display*.py` | Experimental: AMS643YE05 panel driver for the vendor `mediatek_v2` DRM, CPU frame trigger (not used) |
 | `config/` | NetworkManager route metrics (Wi-Fi first, Ethernet fallback), Tailscale firewall rule, Bluetooth name |
+| `scripts/full-backup.sh` | Read-only full UFS backup from pmOS (tables, both GPT copies, every partition, phone/host sha256) |
+| `scripts/persist-rootfs.sh`, `persist-data.sh` | Persistent install: copy the running RAM system to `super` (btrfs @); `userdata` as the data disk |
+| `config/reboot/` | `denniz-reboot-mode` (systemd-shutdown hook setting LK's reboot mode), `powerkey-rescue` (hold power 4 s) |
+| `config/motd/` | SSH welcome banner (English; `.es.sh` = Spanish) |
 | `scripts/soak.sh` | Long-running health log (ping, load, battery, temperatures, services) |
 | `scripts/dump-*.sh`, `twrp-to-recovery.sh` | Partition backup from TWRP (chunked, sha256-verified) |
 | `scripts/dtpaths.py` | Node/compatible/status listing to diff two decompiled device trees |

@@ -1,0 +1,19 @@
+#!/bin/sh
+# denniz-reboot-mode [recovery|bootloader|normal]: tell MediaTek LK where to boot after the next reset.
+# LK reads the low nibble of the TOPRGU non-reset register 2 (0x10007024; LK's own DT: syscon-reboot-mode,
+# offset 0x24, mask 0xf, mode-recovery=2, mode-bootloader=3). It survives the watchdog/PSCI reset.
+# Tested 2026-11-18: 2 boots the recovery partition. 3 (fastboot) does NOT work from Linux: LK hangs with the panel
+# off for ~90 s until the hardware watchdog resets it (it then lands in recovery).
+# Also installed as a systemd-shutdown hook: called with $1=reboot it applies `systemctl reboot --reboot-argument=X`
+# (from /run/systemd/reboot-param), else the default from /etc/denniz-reboot-default (recovery|normal).
+REG=0x10007024
+set_mode() { v=$(devmem2 $REG w 2>/dev/null | sed -n 's/.*: 0x\([0-9a-fA-F]*\)$/\1/p'); [ -n "$v" ] || return 1
+  devmem2 $REG w $(printf '0x%08x' $(( (0x$v & ~0xf) | $1 ))) >/dev/null; }
+mode_of() { case "$1" in recovery) echo 2;; bootloader|fastboot) echo 3;; normal|"") echo 0;; *) echo 0;; esac; }
+case "${1:-}" in
+  reboot) a=$(cat /run/systemd/reboot-param 2>/dev/null); [ -n "$a" ] || a=$(cat /etc/denniz-reboot-default 2>/dev/null)
+          set_mode $(mode_of "$a"); echo "denniz-reboot-mode: next boot = ${a:-normal}" > /dev/kmsg 2>/dev/null ;;
+  poweroff|halt|kexec) ;;
+  *) set_mode $(mode_of "${1:-normal}") && echo "next boot: ${1:-normal}" ;;
+esac
+exit 0
