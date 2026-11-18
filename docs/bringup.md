@@ -183,16 +183,72 @@ postmarketOS' nftables rules for Docker and Tailscale (`config/52_tailscale.nft`
 with overlayfs, cgroup v2 and the systemd cgroup driver with no `docker info` warnings, containers reach the
 network, and tailscaled is up waiting for a login. `scripts/soak.sh` logs the health of a long run.
 
-## 15. Display: work in progress (2026-11-17)
-The panel is a Samsung AMS643YE05 (1080x2400 AMOLED, MIPI-DSI command mode, DSC 1.1, 4 lanes). LK initialises it
-and leaves its logo on screen. `kernel/panel-oneplus-denniz-ams643ye05.c` ports the OnePlus panel driver (init
-sequence and DSC parameters) to the tree's vendor `mediatek_v2` DRM; it adopts the panel as LK left it. Built only
-with `DENNIZ_DISPLAY=1`. The driver binds, `/dev/dri` and an fbcon framebuffer come up, and the console buffer is
-scanned out by the overlay engine. In command mode a frame only reaches the panel when the path is triggered.
-The vendor driver does that from a GCE (command queue) loop, which this tree does not have: its CMDQ is a stub that
-executes register writes at once. `scripts/patch-display-cputrig.py` re-triggers the path from a kernel work
-item instead. The triggers run, but the DSI host does not report a finished frame yet; next is keeping LK's
-dual-pipe setup and comparing the DSI/DSC sequence with the GCE loop.
+## 15. Display: panel console (2026-11-17/18)
+The panel is a Samsung AMS643YE05 (1080x2400 AMOLED, MIPI-DSI command mode, DSC 1.1, 4 lanes). Porting the
+OnePlus panel driver to the tree's vendor `mediatek_v2` DRM (`kernel/panel-oneplus-denniz-ams643ye05.c`,
+`DENNIZ_DISPLAY=1`) got as far as triggers without finished frames: the vendor driver pushes command-mode frames
+from a GCE (command queue) loop, and this tree's CMDQ is a stub.
+
+What works instead is to **keep what LK set up**. LK leaves the whole dual-pipe OVL → DSC → DSI path programmed
+and scanning its framebuffer. With `DENNIZ_LKFB=1`:
+- the board DT points a `simple-framebuffer` at LK's buffer (0x78810000, 1080x2400, pitch 4352, a8r8g8b8), so
+  simpledrm + fbcon draw there;
+- `kernel/denniz-lkfb.c` (built in) re-triggers the path from a delayed work item: clear the DSI interrupt status,
+  enable the display mutex, toggle `DSI_START`, skipped while the DSI is busy. Rate `denniz_lkfb.hz` (default 2,
+  0 = stop); the CPU cost is negligible. It refuses to run unless LK left DSI in command mode with the mutex
+  configured, and clears LK's logo overlay layer once;
+- fbcon is rotated to landscape (`rotate_all=1`) with the 16x32 Terminus font: 150x33 characters.
+
+Two traps cost most of the time:
+- The tree's `mtk-logstore-console` has an `fb_mirror` work item that copies a *second* candidate buffer
+  (0x78e0c000) over 0x78810000 every 2 s, written for a board where LK sometimes scans the other buffer. Here it
+  made the panel alternate between the live console and a stale frame. LKFB builds start it disabled
+  (`/sys/kernel/debug/logstore/fb_mirror`).
+- simpledrm ignores fbdev blanking, so "blank" only froze the last frame. `config/screen/screen-idle` paints the
+  console black through `/dev/fb0` (black = pixels off on AMOLED), lets one frame go out, then sets `hz=0`.
+
+`config/screen/`: `btop-console.service` (btop on tty1), `screen-idle` (blank after 1 h without input, SIGSTOP
+btop; any key wakes), `kernel.printk = 3 4 1 7` so kernel messages do not paint over btop, and logind ignoring a
+short power-key press (a long press still powers off).
+
+## 16. USB-C: hub, Ethernet, automatic role (2026-11-18)
+The port is USB 2.0 only (`mtu3` dual role + `xhci-mtk`). Forcing host mode
+(`echo host > /sys/class/usb_role/11201000.usb-role-switch/role`) with a powered USB-C hub gives a working
+RTL8153 Gigabit Ethernet (`r8152`, DHCP from NetworkManager; route metrics keep Wi-Fi first and Ethernet as
+fallback, tested by switching Wi-Fi off), USB storage (~40 MB/s, the USB 2.0 limit), and the phone powered from
+the hub.
+
+**Automatic role.** The Type-C controller is the MT6360's TCPC (i2c bus at 0x11f00000, address 0x4e), which the
+board tree had left disabled. With `DENNIZ_TYPEC=1` only the MT6360 TCPC is enabled (its charger stays off; denniz
+charges with the MP2650) and the connector is a **sink only**, so the phone never sources VBUS.
+`scripts/patch-typec.py` fixes two things in the tree:
+- the tree's MT6360 platform driver unmasks the TCPC alerts after probe but leaves out `POWER_STATUS`, so TCPM
+  never learned that VBUS was present and stopped in `SNK_DEBOUNCED`;
+- a sink-only port does not toggle, so a source already connected at boot (or still there after a detach) never
+  raised a CC-change event and was never attached. TCPM now attaches from the CC state it already has.
+
+The tree's sink PDOs also offered 9 V and 12 V. The hub accepted 12 V and dropped VBUS during the transition, and
+TCPM detached and retried in a loop (the voltage never rose, per the MP2650's ADC). The connector now offers
+5 V / 3 A only, with the dual-role-data flag.
+
+Result with a PD hub: attach, a 5 V contract, then **the hub requests a data-role swap** and the phone becomes the
+USB host by itself, as on Android. Back on a PC cable the phone attaches as a device. `scripts/usb-role-auto.sh`
+does what TCPM does not: `mtu3` does not pull D+ up again after host → device, so the configfs gadget is re-bound
+to the UDC. If a partner is attached but no PC configures the gadget, it asks for a DR swap, and if the partner
+cannot swap (no PD) it forces host mode. On kernels without the TCPC it switches roles from gadget and enumeration
+state alone.
+
+The first-boot initramfs keeps a respawning root shell on the ACM gadget (`/dev/ttyGS0`). That loop used to
+survive `switch_root`; once the gadget went away (host mode) it spun and printed "sleep: not found" on the
+console. `init` now kills it before switching root.
+
+## 17. Robustness (2026-11-17)
+- systemd feeds the hardware watchdog (`RuntimeWatchdogSec=30s`); two out-of-memory hangs during large builds
+  rebooted the phone on their own.
+- `scripts/wifi-ensure.sh`: the gen4m Wi-Fi driver can hang with a full TX ring (WFDMA1 TX0). The service pings the
+  gateway every 30 s and, after three misses, power-cycles the radio through `/dev/wmtWifi`.
+- CPU inference with llama.cpp (Qwen2.5-0.5B Q4_K_M, 8 threads): 45 tokens/s prompt, 22 tokens/s generation. On
+  the GPU, Rusticl's compiler (libclang 23) crashes on some ggml OpenCL kernels; not pursued.
 
 ## Reading a failed boot
 Flash TWRP back to `recovery`, boot it, dump `expdb` (`scripts/dump-chunked.sh OUT expdb:/dev/block/sdc8`) and run

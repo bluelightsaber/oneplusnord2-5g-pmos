@@ -17,7 +17,7 @@ python3 /var/tmp/mesa/mesa-g77-patch.py $S
   -Dgallium-rusticl=true -Dgallium-rusticl-enable-drivers=panfrost -Drust_std=2021 \
   -Dgallium-va=disabled -Dvideo-codecs= -Dzstd=enabled -Dexpat=enabled -Dxmlconfig=enabled -Dshader-cache=enabled \
   -Dbuild-tests=false -Dvalgrind=disabled -Dlibunwind=disabled
-ninja -C build
+ninja -C build -j${J:-4}   # 8 jobs + the RAM rootfs ran out of memory (2026-11-17)
 ninja -C build install
 tar -C / -czf /var/tmp/mesa/mesa-g77-$V.tgz ${P#/}
 echo "MESA BUILD OK $(date)"

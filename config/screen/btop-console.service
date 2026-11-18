@@ -1,0 +1,22 @@
+[Unit]
+Description=btop on the panel console (tty1, landscape)
+Conflicts=getty@tty1.service
+After=systemd-user-sessions.service getty@tty1.service
+ConditionPathExists=/dev/fb0
+
+[Service]
+# unprivileged login user of the RAM rootfs ("phone" once the persistent install creates it)
+User=user
+Environment=TERM=linux HOME=/home/user
+ExecStartPre=+-/bin/sh -c 'echo 1 > /sys/class/graphics/fbcon/rotate_all; setterm --blank 0 --powerdown 0 > /dev/tty1'
+ExecStart=/usr/bin/btop
+StandardInput=tty
+StandardOutput=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

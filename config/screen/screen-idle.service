@@ -1,0 +1,11 @@
+[Unit]
+Description=Blank the panel console when idle, wake on any input
+After=btop-console.service
+ConditionPathExists=/dev/fb0
+
+[Service]
+ExecStart=/usr/local/bin/screen-idle
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

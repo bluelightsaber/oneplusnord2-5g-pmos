@@ -20,10 +20,15 @@ sudo -n ip addr replace 172.16.42.2/24 dev $IF; sudo -n ip link set $IF up; echo
 ping -c 2 -W 2 172.16.42.1 >/dev/null && echo "phone answers on 172.16.42.1" || echo "WARNING: no ping"
 pkill -f 'http.server 8000 --bind 172.16.42.2' || true; sleep 1   # a leftover server would serve a deleted dir (404)
 W=$(mktemp -d); ln -s $TGZ $W/root.tgz; [ -f $FW ] && ln -s $FW $W/fw.tgz
+# Private node state unpacked over the rootfs before init (never in the repo): Tailscale identity, so the
+# RAM system keeps the same tailnet node across boots. Served only on the USB link.
+PS=$N/firmware-vendor/private/tailscale-state.tgz
+if [ -f $PS ]; then T=$(mktemp -d); mkdir -p $T/var/lib/tailscale; tar -C $T/var/lib/tailscale -xzf $PS
+  chmod 700 $T/var/lib/tailscale; (umask 077; tar -C $T --owner=0 --group=0 -czf $W/priv.tgz var); rm -rf $T; fi
 (cd $W && exec timeout 1200 python3 -m http.server 8000 --bind 172.16.42.2 >$O/http.log 2>&1) &
 HS=$!; trap 'kill $HS 2>/dev/null; pkill -f "http.server 8000 --bind 172.16.42.2"; rm -rf $W' EXIT
 sleep 2
-acm "mkdir -p /newroot && mount -t tmpfs -o size=6g,mode=755 tmpfs /newroot && ( cd /newroot && wget -q -O - http://172.16.42.2:8000/root.tgz | tar xz && { wget -q -O - http://172.16.42.2:8000/fw.tgz | tar xz || true; } && [ -e /newroot/sbin/init ] && echo OK > /tmp/fetch.done || echo FAIL > /tmp/fetch.done ) > /tmp/fetch.log 2>&1 & echo started"
+acm "mkdir -p /newroot && mount -t tmpfs -o size=6g,mode=755 tmpfs /newroot && ( cd /newroot && wget -q -O - http://172.16.42.2:8000/root.tgz | tar xz && { wget -q -O - http://172.16.42.2:8000/fw.tgz | tar xz || true; } && { wget -q -O - http://172.16.42.2:8000/priv.tgz | tar xz || true; } && [ -e /newroot/sbin/init ] && echo OK > /tmp/fetch.done || echo FAIL > /tmp/fetch.done ) > /tmp/fetch.log 2>&1 & echo started"
 T0=$(date +%s); R=""
 while [ $(( $(date +%s) - T0 )) -lt 900 ]; do
   sleep 10; R=$(acm "echo RES=\$(cat /tmp/fetch.done 2>/dev/null); df -m /newroot | tail -1" | tr '\n' ' '); echo "$(( $(date +%s) - T0 ))s: $R"
@@ -39,7 +44,9 @@ for i in $(seq 60); do
     B=$N/src/build-denniz
     # Full kernel: ship all modules (build-kernel.sh -> modules.tgz, usr/lib/modules/<ver>); old builds without it
     # only get the modules.builtin* lists (modprobe of built-in features needs /lib/modules/$(uname -r) to exist).
-    if [ -f $B/modules.tgz ]; then cat $B/modules.tgz
+    # Prefer the modules saved next to the image (rebuild.sh): build-denniz/modules.tgz is the *last* build's.
+    M=${IMG%.img}.modules.tgz; [ -f $M ] || M=$B/modules.tgz
+    if [ -f $M ]; then cat $M
     else tar -C $B --transform 's,^,usr/lib/modules/KVER/,' -czf - modules.builtin modules.builtin.modinfo modules.order 2>/dev/null; fi | \
       ssh -i $K -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR user@172.16.42.1 'cat > /tmp/kmod.tgz'
     ssh -i $K -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR user@172.16.42.1 \

@@ -38,7 +38,8 @@ Updated: 2026-11-16. Project directory on the host: `/srv/nord2-pmos/`.
 ## Level 5 — services
 - [ ] userdata as btrfs data disk (/data, /opt/docker, /var/lib/containerd)
 - [~] NTP, Docker, Tailscale, nftables, user `phone` — NTP/timezone, Docker 29.10 (overlayfs, cgroup v2), nftables
-  (pmOS + 51_docker + 52_tailscale) and tailscaled verified in RAM (usb21); pending: Tailscale login, user `phone`,
+  (pmOS + 51_docker + 52_tailscale) and tailscaled verified in RAM (usb21/usb23); Tailscale logged in, node state
+  restored on every RAM boot (kept privately on the host); pending: user `phone`,
   Docker data-root on the data disk
 ## Level 6 — maintenance
 - [ ] Kernel update cycle following pmOS

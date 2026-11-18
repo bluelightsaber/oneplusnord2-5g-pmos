@@ -1,0 +1,4 @@
+# see 20-denniz-console.conf: console_loglevel is ignored while printk.ignore_loglevel is set
+w /sys/module/printk/parameters/ignore_loglevel - - - - N
+# logstore fb_mirror copies a stale buffer over the scanned-out one every 2 s (kernels built before the fix)
+w /sys/kernel/debug/logstore/fb_mirror - - - - N

@@ -71,9 +71,23 @@ if [ "${DENNIZ_DISPLAY:-0}" = 1 ]; then
   sed -i -E '/^(# )?CONFIG_(DRM_MEDIATEK|DRM_MEDIATEK_V2|DRM_PANEL_ONEPLUS_DENNIZ)[= ]/d' $C
   printf 'CONFIG_DRM_MEDIATEK=y\nCONFIG_DRM_MEDIATEK_V2=y\nCONFIG_DRM_PANEL_ONEPLUS_DENNIZ=y\n' >> $C
 fi
+# Panel console without a display driver (opt-in while in test): simpledrm on LK's framebuffer + the LK pipeline
+# frame pusher (kernel/denniz-lkfb.c); the DT side is in mk-denniz-dts.py. Not combined with DENNIZ_DISPLAY.
+XCMD=""
+# MT6360 TCPC (DT side in mk-denniz-dts.py): VBUS alert + sink-only attach fixes
+[ "${DENNIZ_TYPEC:-0}" = 1 ] && python3 $N/repo/scripts/patch-typec.py $K > /dev/null
+if [ "${DENNIZ_LKFB:-0}" = 1 ] && [ "${DENNIZ_DISPLAY:-0}" != 1 ]; then
+  python3 $N/repo/scripts/patch-lkfb.py $K $N/repo > /dev/null
+  # logstore's fb_mirror copies the stale 0x78e0c000 buffer over simpledrm's 0x78810000 every 2 s
+  # (the screen alternated between the live console and an old frame): start it off
+  sed -i 's/^static bool fb_mirror_on = true;/static bool fb_mirror_on = false;/' $K/drivers/misc/mtk-logstore-console.c
+  # btop console as on the 9 Pro: landscape (fbcon rotate_all) with the large Terminus font
+  on DRM_SIMPLEDRM DENNIZ_LKFB FRAMEBUFFER_CONSOLE_ROTATION FONTS FONT_8x16 FONT_TER16x32
+  XCMD=" fbcon=font:TER16x32"
+fi
 sed -i -E '/^CONFIG_CMDLINE=/d' $C
-echo 'CONFIG_CMDLINE="console=tty0 earlycon=mtk8250,mmio32,0x11002000 clk_ignore_unused regulator_ignore_unused pd_ignore_unused ignore_loglevel panic=5 printk.devkmsg=on log_buf_len=4194304 pstore.kmsg_bytes=262144 ramoops.mem_address=0x48090000 ramoops.mem_size=0x8f000 ramoops.record_size=0x1000 ramoops.console_size=0x40000 ramoops.ftrace_size=0 ramoops.pmsg_size=0 rdinit=/init"' >> $C
-git add -A drivers/i2c/busses/i2c-mt65xx.c drivers/gpu/drm/panel drivers/gpu/drm/mediatek/mediatek_v2/mtk_drm_crtc.c $W/mgmt/privacy.c $W/chips/soc3_0/soc3_0.c $W/os/linux/gl_kal.c $W/os/linux/include/gl_kal.h $W/Makefile arch/arm64/boot/dts/mediatek/mt6893-oneplus-denniz.dts arch/arm64/boot/dts/mediatek/Makefile \
+echo 'CONFIG_CMDLINE="console=tty0 earlycon=mtk8250,mmio32,0x11002000 clk_ignore_unused regulator_ignore_unused pd_ignore_unused ignore_loglevel panic=5 printk.devkmsg=on log_buf_len=4194304 pstore.kmsg_bytes=262144 ramoops.mem_address=0x48090000 ramoops.mem_size=0x8f000 ramoops.record_size=0x1000 ramoops.console_size=0x40000 ramoops.ftrace_size=0 ramoops.pmsg_size=0 rdinit=/init'"$XCMD"'"' >> $C
+git add -A drivers/i2c/busses/i2c-mt65xx.c drivers/usb/typec/tcpm drivers/gpu/drm/panel drivers/soc/mediatek drivers/gpu/drm/mediatek/mediatek_v2/mtk_drm_crtc.c $W/mgmt/privacy.c $W/chips/soc3_0/soc3_0.c $W/os/linux/gl_kal.c $W/os/linux/include/gl_kal.h $W/Makefile arch/arm64/boot/dts/mediatek/mt6893-oneplus-denniz.dts arch/arm64/boot/dts/mediatek/Makefile \
   arch/arm64/kernel/chopin-board.dts arch/arm64/kernel/head.S drivers/misc/mtk-logstore-console.c $C
 git commit -q -m "denniz: OnePlus Nord 2 5G first-boot board tree and config" && git log --oneline -2
 git diff HEAD~1 --stat

@@ -26,6 +26,9 @@ printf '[keyfile]\nunmanaged-devices=interface-name:usb0;interface-name:wlan1;in
 # MTK gen4m firmware keeps transmitting with its own (NVRAM) MAC: a NM-randomized MAC makes 802.11 auth time out.
 printf '[device]\nwifi.scan-rand-mac-address=no\n\n[connection]\nwifi.cloned-mac-address=permanent\nwifi.powersave=2\n' | \
   sudo -n tee $R/etc/NetworkManager/conf.d/91-denniz-mac.conf >/dev/null
+# Safety nets (untested 2026-11-17): systemd feeds the hardware watchdog; a boot stuck before multi-user reboots
+sudo -n install -D -m 644 $N/repo/config/10-denniz-watchdog.conf $R/etc/systemd/system.conf.d/10-denniz-watchdog.conf
+sudo -n install -D -m 644 $N/repo/config/multi-user-timeout.conf $R/etc/systemd/system/multi-user.target.d/10-denniz-timeout.conf
 # Server stack: Tailscale firewall rule, docker + tailscaled enabled, user in group docker (login: tailscale up)
 sudo -n install -m 644 $N/repo/config/52_tailscale.nft $R/etc/nftables.d/52_tailscale.nft
 for u in docker tailscaled; do
@@ -35,6 +38,25 @@ done
 grep -qE '^docker:[^:]*:[0-9]+:(.*,)?user(,|$)' $R/etc/group || \
   sudo -n sed -i -E '/^docker:/{s/:$/:user/;t;s/$/,user/}' $R/etc/group
 grep -E '^docker:' $R/etc/group
+# Wi-Fi TX-hang recovery (gateway ping, WMT power cycle)
+sudo -n install -D -m 755 $N/repo/scripts/wifi-ensure.sh $R/usr/local/sbin/wifi-ensure
+sudo -n install -m 644 $N/repo/config/wifi-ensure.service $R/etc/systemd/system/
+sudo -n ln -sfn ../wifi-ensure.service $R/etc/systemd/system/multi-user.target.wants/wifi-ensure.service
+# USB role: no Type-C detection, so switch to host when no PC configures the gadget (OTG hub: Ethernet, pendrive)
+sudo -n install -D -m 755 $N/repo/scripts/usb-role-auto.sh $R/usr/local/sbin/usb-role-auto
+sudo -n install -m 644 $N/repo/config/usb-role-auto.service $R/etc/systemd/system/
+sudo -n ln -sfn ../usb-role-auto.service $R/etc/systemd/system/multi-user.target.wants/usb-role-auto.service
+# Panel console (needs a kernel with simpledrm + denniz-lkfb; skipped by ConditionPathExists=/dev/fb0 otherwise):
+# btop on tty1 in landscape, blank after 1 h idle, wake on power/volume keys; a short power press never powers off
+S=$N/repo/config/screen
+sudo -n install -D -m 644 $S/60-powerkey.conf $R/etc/systemd/logind.conf.d/60-powerkey.conf
+sudo -n install -D -m 644 $S/20-denniz-console.conf $R/etc/sysctl.d/20-denniz-console.conf
+sudo -n install -D -m 644 $S/denniz-console.tmpfiles $R/etc/tmpfiles.d/denniz-console.conf
+sudo -n install -D -m 755 $S/screen-idle $R/usr/local/bin/screen-idle
+sudo -n install -m 644 $S/btop-console.service $S/screen-idle.service $R/etc/systemd/system/
+echo "TIMEOUT=3600" | sudo -n tee $R/etc/screen-idle.conf >/dev/null
+for u in btop-console screen-idle; do sudo -n ln -sfn ../$u.service $R/etc/systemd/system/multi-user.target.wants/$u.service; done
+sudo -n rm -f $R/etc/systemd/system/getty.target.wants/getty@tty1.service
 sudo -n tar -C $R --numeric-owner --exclude=./proc/* --exclude=./sys/* --exclude=./dev/* --exclude=./boot/* \
   --exclude=./lib/modules/* --exclude=./usr/lib/modules/* -czf $N/images/pmos-root.tgz .
 sudo -n chown pmos: $N/images/pmos-root.tgz; ls -la $N/images/pmos-root.tgz

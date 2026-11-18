@@ -1,12 +1,12 @@
-From 2ebd90b9979492dbdccd28c5cc604ac931cc9b6e Mon Sep 17 00:00:00 2001
+From f02b7f993880b2d7b9b54b800fd66d149bc6aa54 Mon Sep 17 00:00:00 2001
 From: bluelightsaber <bluelightsaber@users.noreply.github.com>
-Date: Tue, 17 Nov 2026 01:11:38 +0100
+Date: Wed, 18 Nov 2026 02:32:25 +0100
 Subject: [PATCH] denniz: OnePlus Nord 2 5G board tree and config
 
 ---
  arch/arm64/boot/dts/mediatek/Makefile         |    1 +
- .../dts/mediatek/mt6893-oneplus-denniz.dts    | 3568 +++++++++++++++++
- arch/arm64/configs/denniz_defconfig           | 2019 ++++++++++
+ .../dts/mediatek/mt6893-oneplus-denniz.dts    | 3593 +++++++++++++++++
+ arch/arm64/configs/denniz_defconfig           | 2025 ++++++++++
  arch/arm64/kernel/chopin-board.dts            |    2 +-
  arch/arm64/kernel/head.S                      |    4 +-
  drivers/i2c/busses/i2c-mt65xx.c               |  101 +-
@@ -15,10 +15,16 @@ Subject: [PATCH] denniz: OnePlus Nord 2 5G board tree and config
  .../wlan_drv_gen4m/mgmt/privacy.c             |    9 +
  .../wlan_drv_gen4m/os/linux/gl_kal.c          |    2 +-
  .../wlan_drv_gen4m/os/linux/include/gl_kal.h  |    4 +-
- drivers/misc/mtk-logstore-console.c           |    4 +-
- 12 files changed, 5701 insertions(+), 16 deletions(-)
+ drivers/misc/mtk-logstore-console.c           |    6 +-
+ drivers/soc/mediatek/Kconfig                  |    8 +
+ drivers/soc/mediatek/Makefile                 |    1 +
+ drivers/soc/mediatek/denniz-lkfb.c            |  109 +
+ drivers/usb/typec/tcpm/tcpci_mt6360.c         |    3 +-
+ drivers/usb/typec/tcpm/tcpm.c                 |    6 +
+ 17 files changed, 5859 insertions(+), 18 deletions(-)
  create mode 100644 arch/arm64/boot/dts/mediatek/mt6893-oneplus-denniz.dts
  create mode 100644 arch/arm64/configs/denniz_defconfig
+ create mode 100644 drivers/soc/mediatek/denniz-lkfb.c
 
 diff --git a/arch/arm64/boot/dts/mediatek/Makefile b/arch/arm64/boot/dts/mediatek/Makefile
 index 819767ded..f1ac26377 100644
@@ -34,10 +40,10 @@ index 819767ded..f1ac26377 100644
  #
 diff --git a/arch/arm64/boot/dts/mediatek/mt6893-oneplus-denniz.dts b/arch/arm64/boot/dts/mediatek/mt6893-oneplus-denniz.dts
 new file mode 100644
-index 000000000..cc3e53f79
+index 000000000..468c0ded3
 --- /dev/null
 +++ b/arch/arm64/boot/dts/mediatek/mt6893-oneplus-denniz.dts
-@@ -0,0 +1,3568 @@
+@@ -0,0 +1,3593 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * OnePlus Nord 2 5G (denniz) - generated from the chopin board file by scripts/mk-denniz-dts.py
@@ -279,14 +285,14 @@ index 000000000..cc3e53f79
 +		#size-cells = <0x02>;
 +		ranges;
 +
-+		framebuffer@78e0c000 {
++		framebuffer@78810000 {
 +			compatible = "simple-framebuffer";
-+			reg = <0x0 0x78e0c000 0x0 0x9f6000>;
++			reg = <0x0 0x78810000 0x0 0x9f6000>;
 +			width = <0x438>;
 +			height = <0x960>;
 +			stride = <0x1100>;
 +			format = "a8r8g8b8";
-+			status = "disabled";
++			status = "okay";
 +		};
 +	};
 +	aliases {
@@ -3504,10 +3510,6 @@ index 000000000..cc3e53f79
 +	status = "disabled";
 +};
 +
-+&i2c5 {
-+	status = "disabled";
-+};
-+
 +&i2c6 {
 +	status = "disabled";
 +};
@@ -3577,6 +3579,35 @@ index 000000000..cc3e53f79
 +	/delete-property/ vbus-supply;
 +};
 +
++/* MT6360 Type-C port controller (mainline tcpci_mt6360 + TCPM) on i2c5: CC detection drives the
++ * usb@11201000 role switch (OTG hub -> host, PC -> device). Only the TCPC: the MT6360 charger stays off (denniz
++ * charges with the MP2650), and the port is a power SINK only - it never sources VBUS (a hub must be powered).
++ * The vendor-style children at 0x1a/0x64/0x4e are off: the mt6360 MFD claims those addresses itself. */
++&i2c5 {
++	status = "okay";
++};
++&{/i2c5@11F00000/subpmic@34/charger} {
++	status = "disabled";
++};
++&{/i2c5@11F00000/subpmic@34/tcpc/connector} {
++	power-role = "sink";
++	/delete-property/ try-power-role;
++	/delete-property/ source-pdos;
++	/* 5 V only (the tree also offered 9/12 V: the hub then cut VBUS mid-transition). 5 V 3 A, USB comm +
++	 * dual-role data capable, so a PD hub can swap us to host. */
++	sink-pdos = <0x0601912c>;
++	op-sink-microwatt = <15000000>;
++};
++&{/i2c5@11F00000/usb_type_c@4e} {
++	status = "disabled";
++};
++&{/i2c5@11F00000/subpmic_pmic@1a} {
++	status = "disabled";
++};
++&{/i2c5@11F00000/subpmic_ldo@64} {
++	status = "disabled";
++};
++
 +/* Fuel gauge: TI bq28z610 on i2c7 at 0x55, 100 kHz (from denniz's own tree). */
 +&i2c7 {
 +	status = "okay";
@@ -3608,10 +3639,10 @@ index 000000000..cc3e53f79
 +
 diff --git a/arch/arm64/configs/denniz_defconfig b/arch/arm64/configs/denniz_defconfig
 new file mode 100644
-index 000000000..8f0e49480
+index 000000000..4e708a2d7
 --- /dev/null
 +++ b/arch/arm64/configs/denniz_defconfig
-@@ -0,0 +1,2019 @@
+@@ -0,0 +1,2025 @@
 +CONFIG_SYSVIPC=y
 +CONFIG_POSIX_MQUEUE=y
 +CONFIG_AUDIT=y
@@ -5630,7 +5661,13 @@ index 000000000..8f0e49480
 +CONFIG_BT_BNEP=y
 +CONFIG_BT_HIDP=y
 +CONFIG_BLK_DEV_THROTTLING=y
-+CONFIG_CMDLINE="console=tty0 earlycon=mtk8250,mmio32,0x11002000 clk_ignore_unused regulator_ignore_unused pd_ignore_unused ignore_loglevel panic=5 printk.devkmsg=on log_buf_len=4194304 pstore.kmsg_bytes=262144 ramoops.mem_address=0x48090000 ramoops.mem_size=0x8f000 ramoops.record_size=0x1000 ramoops.console_size=0x40000 ramoops.ftrace_size=0 ramoops.pmsg_size=0 rdinit=/init"
++CONFIG_DRM_SIMPLEDRM=y
++CONFIG_DENNIZ_LKFB=y
++CONFIG_FRAMEBUFFER_CONSOLE_ROTATION=y
++CONFIG_FONTS=y
++CONFIG_FONT_8x16=y
++CONFIG_FONT_TER16x32=y
++CONFIG_CMDLINE="console=tty0 earlycon=mtk8250,mmio32,0x11002000 clk_ignore_unused regulator_ignore_unused pd_ignore_unused ignore_loglevel panic=5 printk.devkmsg=on log_buf_len=4194304 pstore.kmsg_bytes=262144 ramoops.mem_address=0x48090000 ramoops.mem_size=0x8f000 ramoops.record_size=0x1000 ramoops.console_size=0x40000 ramoops.ftrace_size=0 ramoops.pmsg_size=0 rdinit=/init fbcon=font:TER16x32"
 diff --git a/arch/arm64/kernel/chopin-board.dts b/arch/arm64/kernel/chopin-board.dts
 index a11c109b1..0f4649f22 100644
 --- a/arch/arm64/kernel/chopin-board.dts
@@ -5904,7 +5941,7 @@ index 0ca4ba299..bf3dd88fd 100644
  #endif
  
 diff --git a/drivers/misc/mtk-logstore-console.c b/drivers/misc/mtk-logstore-console.c
-index 10249d9ad..e5374618c 100644
+index 10249d9ad..3557c0d16 100644
 --- a/drivers/misc/mtk-logstore-console.c
 +++ b/drivers/misc/mtk-logstore-console.c
 @@ -155,7 +155,7 @@
@@ -5925,6 +5962,189 @@ index 10249d9ad..e5374618c 100644
  #define FB_PENDING_MAX		16U
  
  struct fb_pending_band {
+@@ -501,7 +501,7 @@ static void __iomem *fb_window(void)
+ #define FB_MIRROR_PERIOD_MS	2000
+ 
+ static struct delayed_work fb_mirror_work;
+-static bool fb_mirror_on = true;
++static bool fb_mirror_on = false;
+ 
+ static void fb_mirror_fn(struct work_struct *work)
+ {
+diff --git a/drivers/soc/mediatek/Kconfig b/drivers/soc/mediatek/Kconfig
+index 9f73f507f..bb4916ced 100644
+--- a/drivers/soc/mediatek/Kconfig
++++ b/drivers/soc/mediatek/Kconfig
+@@ -89,6 +89,14 @@ config MTK_SOCINFO
+ 	  information about the SoC to the userspace including the
+ 	  manufacturer name, marketing name and soc name.
+ 
++config DENNIZ_LKFB
++	bool "OnePlus Nord 2 (denniz): push frames through the bootloader display pipeline"
++	depends on ARM64
++	help
++	  Command-mode panel console without a display driver: periodically
++	  triggers the display path LK leaves configured, so a
++	  simple-framebuffer (simpledrm) on LK's framebuffer reaches the panel.
++
+ endmenu
+ 
+ config MTK_MBOX
+diff --git a/drivers/soc/mediatek/Makefile b/drivers/soc/mediatek/Makefile
+index c41ec32fb..5356219b2 100644
+--- a/drivers/soc/mediatek/Makefile
++++ b/drivers/soc/mediatek/Makefile
+@@ -11,3 +11,4 @@ obj-$(CONFIG_MTK_SVS) += mtk-svs.o
+ obj-$(CONFIG_MTK_SOCINFO) += mtk-socinfo.o
+ obj-$(CONFIG_MTK_MBOX) += mtk-mbox.o
+ obj-$(CONFIG_MTK_IPI) += mtk_tinysys_ipi.o
++obj-$(CONFIG_DENNIZ_LKFB) += denniz-lkfb.o
+diff --git a/drivers/soc/mediatek/denniz-lkfb.c b/drivers/soc/mediatek/denniz-lkfb.c
+new file mode 100644
+index 000000000..918b3c0fd
+--- /dev/null
++++ b/drivers/soc/mediatek/denniz-lkfb.c
+@@ -0,0 +1,109 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * denniz-lkfb: keep the bootloader's display pipeline alive for a simple-framebuffer console.
++ *
++ * On the OnePlus Nord 2 5G (denniz, MT6893) LK leaves the whole display path configured and running: two
++ * 540 px pipes (OVL0_2L/OVL1_2L layer 0 on the LK framebuffer 0x78810000, pitch 4352, a8r8g8b8; OVL0/OVL1 layer 1
++ * on a logo overlay at 0x79206000), merge, DSC, DSI0 to a Samsung AMS643YE05 command-mode panel. The kernel
++ * leaves the display clocks and power domains on (clk_ignore_unused, pd_ignore_unused) and no display driver
++ * touches the hardware, so a simple-framebuffer node on 0x78810000 (simpledrm) can draw into the buffer the
++ * pipeline scans out. But a command-mode panel only refreshes when a frame is pushed: this driver does that from
++ * the CPU at a fixed rate (default 2 Hz) - DSI_INTSTA clear, MUTEX0 enable (single-shot, self-clearing), DSI_START 0 -> 1 - the
++ * sequence LK itself uses, skipped while the DSI is still busy. Measured: FRAME_DONE about 10 ms after a trigger.
++ *
++ * It refuses to run unless the path looks like LK's (DSI0 in command mode, MUTEX0 has modules routed). It also
++ * clears the logo overlay buffer once so nothing covers the console. Rate: denniz_lkfb.hz (0 = stop).
++ */
++#include <linux/bits.h>
++#include <linux/delay.h>
++#include <linux/init.h>
++#include <linux/io.h>
++#include <linux/jiffies.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++#include <linux/moduleparam.h>
++#include <linux/workqueue.h>
++
++#define DSI0_BASE	0x1400e000
++#define DSI_START	0x00
++#define DSI_INTSTA	0x0c
++#define DSI_MODE_CTRL	0x14
++#define DSI_BUSY	BIT(31)
++#define DSI_FRAME_DONE	BIT(4)
++#define MUTEX_BASE	0x14117000
++#define MUTEX0_EN	0x20
++#define MUTEX0_MOD	0x30
++#define LOGO_BASE	0x79206000	/* LK logo overlay (OVL0/OVL1 layer 1), pitch 4320 */
++#define LOGO_SIZE	(4320 * 2400)
++
++static unsigned int hz = 2;	/* btop refreshes every 1-2 s; each push re-sends the whole frame */
++module_param(hz, uint, 0644);
++MODULE_PARM_DESC(hz, "frame push rate in Hz (0 = stop)");
++static bool clear_logo = true;
++module_param(clear_logo, bool, 0444);
++MODULE_PARM_DESC(clear_logo, "clear LK's logo overlay layer at start");
++
++static void __iomem *dsi, *mutex;
++static unsigned long frames, skipped;
++module_param(frames, ulong, 0444);
++module_param(skipped, ulong, 0444);
++
++static void lkfb_push(struct work_struct *w);
++static DECLARE_DELAYED_WORK(lkfb_work, lkfb_push);
++
++static void lkfb_push(struct work_struct *w)
++{
++	unsigned int rate = READ_ONCE(hz);
++
++	if (rate) {
++		if (readl(dsi + DSI_INTSTA) & DSI_BUSY) {
++			skipped++;
++		} else {
++			writel(0, dsi + DSI_INTSTA);
++			writel(1, mutex + MUTEX0_EN);
++			writel(0, dsi + DSI_START);
++			writel(1, dsi + DSI_START);
++			frames++;
++		}
++	}
++	schedule_delayed_work(&lkfb_work, msecs_to_jiffies(rate ? 1000 / min(rate, 60U) : 1000));
++}
++
++static int __init lkfb_init(void)
++{
++	u32 mode, mod;
++
++	dsi = ioremap(DSI0_BASE, 0x1000);
++	mutex = ioremap(MUTEX_BASE, 0x1000);
++	if (!dsi || !mutex)
++		goto fail;
++	mode = readl(dsi + DSI_MODE_CTRL);
++	mod = readl(mutex + MUTEX0_MOD);
++	if ((mode & 3) != 0 || !mod) {
++		pr_warn("denniz-lkfb: display path not left by LK (DSI mode %#x, mutex0 mod %#x), not starting\n",
++			mode, mod);
++		goto fail;
++	}
++	if (clear_logo) {
++		void *logo = memremap(LOGO_BASE, LOGO_SIZE, MEMREMAP_WC);
++
++		if (logo) {
++			memset(logo, 0, LOGO_SIZE);
++			wmb();
++			memunmap(logo);
++		}
++	}
++	pr_info("denniz-lkfb: pushing LK pipeline frames at %u Hz (mutex0 mod %#x)\n", hz, mod);
++	schedule_delayed_work(&lkfb_work, msecs_to_jiffies(100));
++	return 0;
++fail:
++	if (dsi)
++		iounmap(dsi);
++	if (mutex)
++		iounmap(mutex);
++	return 0;	/* never fail the boot */
++}
++late_initcall(lkfb_init);
++
++MODULE_DESCRIPTION("denniz: push frames through the LK-configured display pipeline");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/usb/typec/tcpm/tcpci_mt6360.c b/drivers/usb/typec/tcpm/tcpci_mt6360.c
+index e489a3665..e08aba0da 100644
+--- a/drivers/usb/typec/tcpm/tcpci_mt6360.c
++++ b/drivers/usb/typec/tcpm/tcpci_mt6360.c
+@@ -210,7 +210,8 @@ static int mt6360_tcpc_probe(struct platform_device *pdev)
+ 	{
+ 		u16 mask = TCPC_ALERT_TX_SUCCESS | TCPC_ALERT_TX_FAILED |
+ 			   TCPC_ALERT_TX_DISCARDED | TCPC_ALERT_RX_STATUS |
+-			   TCPC_ALERT_RX_HARD_RST | TCPC_ALERT_CC_STATUS;
++			   TCPC_ALERT_RX_HARD_RST | TCPC_ALERT_CC_STATUS |
++			   TCPC_ALERT_POWER_STATUS;	/* denniz: VBUS alert, as tcpci_init() (controls_vbus) */
+ 
+ 		ret = mti->tdata.regmap ? mt6360_tcpc_write16(mti->tdata.regmap,
+ 							TCPC_ALERT_MASK, mask) : -ENODEV;
+diff --git a/drivers/usb/typec/tcpm/tcpm.c b/drivers/usb/typec/tcpm/tcpm.c
+index 3b55289cc..fa0aa5151 100644
+--- a/drivers/usb/typec/tcpm/tcpm.c
++++ b/drivers/usb/typec/tcpm/tcpm.c
+@@ -5698,6 +5698,12 @@ static void run_state_machine(struct tcpm_port *port)
+ 			break;
+ 		}
+ 		tcpm_set_cc(port, TYPEC_CC_RD);
++		/* denniz: sink-only ports do not toggle, so a source already present (at boot, or still there
++		 * after a detach) never raises a CC change: attach from the cached CC state */
++		if (port->port_type == TYPEC_PORT_SNK && tcpm_port_is_sink(port)) {
++			tcpm_set_state(port, SNK_ATTACH_WAIT, 0);
++			break;
++		}
+ 		if (port->port_type == TYPEC_PORT_DRP)
+ 			tcpm_set_state(port, SRC_UNATTACHED, PD_T_DRP_SRC);
+ 		break;
 -- 
 2.53.0
 

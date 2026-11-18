@@ -1,0 +1,24 @@
+#!/bin/sh
+# Blank the panel console after TIMEOUT s without input and pause btop; any input event (power/volume keys) wakes it.
+# denniz: the command-mode panel only changes when denniz-lkfb pushes a frame, so on blank paint and push a black frame,
+# then stop pushing (denniz_lkfb.hz=0) until the wake.
+TIMEOUT=3600; HZ_ON=2; [ -r /etc/screen-idle.conf ] && . /etc/screen-idle.conf
+R=/run/screen-idle; mkdir -p $R; touch $R/activity; rm -f $R/blanked
+FB=/sys/class/graphics/fb0/blank; LK=/sys/module/denniz_lkfb/parameters/hz
+btop_pid() { systemctl show -p MainPID --value btop-console.service 2>/dev/null; }
+wake() { [ -w $LK ] && echo $HZ_ON > $LK; echo 0 > $FB; p=$(btop_pid); [ "${p:-0}" -gt 0 ] && kill -CONT $p && kill -WINCH $p; rm -f $R/blanked; logger -t screen-idle wake; }
+# simpledrm ignores the fbdev blank (the image just freezes), so paint the console black first (AMOLED: black =
+# pixels off), let lkfb push that frame, then stop pushing; the wake's unblank + WINCH redraws everything
+sleep_panel() { p=$(btop_pid); [ "${p:-0}" -gt 0 ] && kill -STOP $p; echo 4 > $FB
+  head -c $(( $(cat /sys/class/graphics/fb0/stride) * 2400 )) /dev/zero > /dev/fb0 2>/dev/null; sleep 2
+  [ -w $LK ] && echo 0 > $LK; touch $R/blanked; logger -t screen-idle blank; }
+watch_dev() { while dd if=$1 bs=24 count=1 status=none of=/dev/null 2>/dev/null; do touch $R/activity; [ -e $R/blanked ] && wake; done; }
+known=""
+while true; do
+  for d in /dev/input/event*; do case " $known " in *" $d "*) ;; *) watch_dev $d & known="$known $d";; esac; done
+  if [ ! -e $R/blanked ]; then
+    idle=$(( $(date +%s) - $(stat -c %Y $R/activity) ))
+    [ $idle -ge $TIMEOUT ] && sleep_panel
+  fi
+  sleep 5
+done

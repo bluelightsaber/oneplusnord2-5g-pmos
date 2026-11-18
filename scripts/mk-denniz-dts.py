@@ -13,6 +13,7 @@ Usage: mk-denniz-dts.py CHOPIN_DTS DENNIZ_LIVE_DTS OUT_DTS
 """
 import os, re, sys
 DISPLAY = os.environ.get('DENNIZ_DISPLAY') == '1'   # opt-in display bring-up
+TYPEC = os.environ.get('DENNIZ_TYPEC') == '1'     # opt-in MT6360 TCPC (automatic USB host/device role)
 
 def block(text, header_re):
     """Return (start, end) of the node whose header line matches header_re (end is after its '};\\n')."""
@@ -57,14 +58,22 @@ extra = set(re.findall(r'phandle = <(0x[0-9a-f]+)>', rm)) - {'0xfb', '0xb2', '0x
 assert not extra, f'unexpected phandles in denniz reserved-memory: {extra}'
 src = src[:s] + rm + src[e:]
 
-# chopin simplefb (LK video-mode panel) off: denniz has a command-mode panel (samsung ams643ye05)
-src, n = re.subn(r'(framebuffer@78e0c000 \{.*?status = )"okay"', r'\1"disabled"', src, count=1, flags=re.S); assert n == 1
+# chopin simplefb (LK video-mode panel at 0x78e0c000). denniz has a command-mode panel (samsung ams643ye05): off,
+# unless DENNIZ_LKFB=1, which points it at denniz's LK framebuffer (0x78810000, same 4352 pitch and a8r8g8b8 as
+# the OVL layer LK programs; 4352 * 2400 = 0x9f6000) for simpledrm; kernel/denniz-lkfb.c pushes the frames.
+LKFB = os.environ.get('DENNIZ_LKFB') == '1' and not DISPLAY
+if LKFB:
+    src, n = re.subn(r'framebuffer@78e0c000 \{(.*?)reg = <0x0 0x78e0c000 0x0 0x9f6000>;',
+                     r'framebuffer@78810000 {\1reg = <0x0 0x78810000 0x0 0x9f6000>;', src, count=1, flags=re.S)
+    assert n == 1
+else:
+    src, n = re.subn(r'(framebuffer@78e0c000 \{.*?status = )"okay"', r'\1"disabled"', src, count=1, flags=re.S); assert n == 1
 
 src += '''
 /* ===================== denniz: first-boot overrides ===================== */
 /* Board devices of the Xiaomi handset (or unknown wiring on denniz): off. */
 '''
-for lab in ['i2c0', 'i2c2', 'i2c4', 'i2c5', 'i2c6', 'i2c7', 'i2c8', 'i2c9', 'spi0', 'spi1', 'spi5']\
+for lab in ['i2c0', 'i2c2', 'i2c4'] + ([] if TYPEC else ['i2c5']) + ['i2c6', 'i2c7', 'i2c8', 'i2c9', 'spi0', 'spi1', 'spi5']\
            + ([] if DISPLAY else ['dsi0']) + ['xiaomi_touch', 'cp_qc30', 'usbpd_pm', 'sensor_hub', 'scp_start']:
     assert re.search(rf'\b{lab}:', src + open(chopin.replace('mt6893-xiaomi-chopin.dts', 'mt6893.dtsi')).read()), lab
     src += f'&{lab} {{\n\tstatus = "disabled";\n}};\n\n'
@@ -84,6 +93,37 @@ src += '''/* USB 2.0 dual role, switched by hand from userspace (/sys/class/usb_
 	usb-role-switch;
 	role-switch-default-mode = "peripheral";
 	/delete-property/ vbus-supply;
+};
+
+'''
+if TYPEC:
+    src += '''/* MT6360 Type-C port controller (mainline tcpci_mt6360 + TCPM) on i2c5: CC detection drives the
+ * usb@11201000 role switch (OTG hub -> host, PC -> device). Only the TCPC: the MT6360 charger stays off (denniz
+ * charges with the MP2650), and the port is a power SINK only - it never sources VBUS (a hub must be powered).
+ * The vendor-style children at 0x1a/0x64/0x4e are off: the mt6360 MFD claims those addresses itself. */
+&i2c5 {
+	status = "okay";
+};
+&{/i2c5@11F00000/subpmic@34/charger} {
+	status = "disabled";
+};
+&{/i2c5@11F00000/subpmic@34/tcpc/connector} {
+	power-role = "sink";
+	/delete-property/ try-power-role;
+	/delete-property/ source-pdos;
+	/* 5 V only (the tree also offered 9/12 V: the hub then cut VBUS mid-transition). 5 V 3 A, USB comm +
+	 * dual-role data capable, so a PD hub can swap us to host. */
+	sink-pdos = <0x0601912c>;
+	op-sink-microwatt = <15000000>;
+};
+&{/i2c5@11F00000/usb_type_c@4e} {
+	status = "disabled";
+};
+&{/i2c5@11F00000/subpmic_pmic@1a} {
+	status = "disabled";
+};
+&{/i2c5@11F00000/subpmic_ldo@64} {
+	status = "disabled";
 };
 
 '''
@@ -115,6 +155,7 @@ for n, cid in [(10, 1), (11, 2), (12, 3), (13, 4)]:
 if DISPLAY:
     assert re.search(r'^\t\tpanel@0 \{\n\t\t\tcompatible = "l16_36_02_0b_dsc_vdo,lcm";', src, re.M)
     assert re.search(r'\bmtkfb: mtkfb \{', src)
+    assert 'force_no_prim_dual_pipe;' in open(chopin.replace('mt6893-xiaomi-chopin.dts', 'mt6893.dtsi')).read()
     src += '''/* Display: Samsung AMS643YE05 cmd-mode DSC panel on DSI0 (driver panel-oneplus-denniz-ams643ye05). The chopin
  * panel@0 node is reused for its of_graph endpoint; reset is GPIO 42 on both boards. Power rails stay as LK left
  * them, so no supplies here; brightness is DCS 0x51, so no backlight phandle. The chopin mtkfb pinctrl states
@@ -126,6 +167,11 @@ if DISPLAY:
 		/delete-property/ dvdd-supply;
 		/delete-property/ backlight;
 	};
+};
+
+/* LK drives the panel with two pipes of 540 px (OVL0+OVL1 -> merge -> DSC); chopin forces a single pipe. */
+&dispsys_config {
+	/delete-property/ force_no_prim_dual_pipe;
 };
 
 &mtkfb {

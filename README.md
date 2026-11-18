@@ -11,7 +11,7 @@ It is a personal hobby project, not an official postmarketOS port.
 > keep a full partition backup, and never write the IMEI/calibration partitions (`nvram`, `nvdata`, `nvcfg`,
 > `protect1/2`, `persist`, `proinfo`, `md*`). No vendor firmware or partition images are included.
 
-## Status (2026-11-17)
+## Status (2026-11-18)
 
 | Step | State |
 |---|---|
@@ -27,15 +27,17 @@ It is a personal hobby project, not an official postmarketOS port.
 | Bluetooth (MTK BTIF, bluez) | **done** |
 | Battery fuel gauge (TI bq28z610) | **done** |
 | Charge limit 45–65 % (MPS MP2650 `CHG_EN` only, systemd service) | **done** |
-| USB dual role (host/device switch, `usb-mode`) | **done** (hub test pending) |
+| USB-C: MT6360 TCPC + TCPM, USB-PD sink (5 V only), automatic host/device role (PD data-role swap) | **done** |
+| USB hub: RTL8153 Gigabit Ethernet (Wi-Fi first, Ethernet fallback), USB storage, phone powered by the hub | **done** |
 | GPU: Mali-G77 MC9 with panfrost + patched Mesa (GLES 3.1, Rusticl OpenCL 3.0) | **done** |
 | Docker 29 + Tailscale + nftables | **done** (RAM boot) |
-| Display (Samsung AMS643YE05, DSI command mode + DSC) | in progress (driver ported, no frames yet) |
+| Panel console: btop in landscape on the LK framebuffer (simpledrm + frame pusher), 1 h blank, key wake | **done** |
 | RTC (MT6359) | done (NTP) |
-| Persistent install on UFS, USB Ethernet hub | planned |
+| Persistent install on UFS | planned |
 
-The display is not driven yet by default (command-mode Samsung AMOLED); the LK boot logo stays on screen. A port
-of the OnePlus panel driver is in `kernel/` (opt-in build, see the notes).
+The panel shows a `btop` console: LK leaves the display pipeline running, the kernel draws into LK's framebuffer
+with simpledrm, and a small built-in driver (`kernel/denniz-lkfb.c`) pushes a frame to the command-mode panel twice
+a second. Production kernels are built with `DENNIZ_LKFB=1 DENNIZ_TYPEC=1` (see the notes).
 
 See [`docs/bringup.md`](docs/bringup.md) for the full log of findings and [`CHECKLIST.md`](CHECKLIST.md) for the
 roadmap.
@@ -80,7 +82,11 @@ Key facts (details in the notes):
 | `scripts/charge-limit.sh`, `mp2650-dump.sh`, `config/charge-limit.service` | 45–65 % charge limit via the MP2650 `CHG_EN` bit, register dump |
 | `scripts/usb-mode.sh` | USB host/device role switch with automatic fallback |
 | `scripts/mesa-g77-*.sh`, `mesa-g77-patch.py`, `cl-bench.c`, `gles-tri.c` | Mesa with Mali-G77 support built on the phone, OpenCL/GLES tests |
-| `kernel/`, `scripts/patch-display*.py` | Work in progress: AMS643YE05 panel driver for the vendor `mediatek_v2` DRM, CPU frame trigger |
+| `kernel/denniz-lkfb.c`, `scripts/patch-lkfb.py`, `lkfb-tool.c` | Frame pusher for the LK framebuffer (panel console), /dev/mem debug tool |
+| `config/screen/` | btop console service, `screen-idle` (1 h blank, any key wakes), quiet console, power-key policy |
+| `scripts/patch-typec.py`, `usb-role-auto.sh`, `config/usb-role-auto.service` | MT6360 Type-C fixes; role helper (gadget re-bind, DR swap, fallback without TCPC) |
+| `scripts/wifi-ensure.sh`, `config/wifi-ensure.service` | Wi-Fi watchdog: power-cycles the radio after a TX hang |
+| `kernel/panel-*.c`, `scripts/patch-display*.py` | Experimental: AMS643YE05 panel driver for the vendor `mediatek_v2` DRM, CPU frame trigger (not used) |
 | `config/` | NetworkManager route metrics (Wi-Fi first, Ethernet fallback), Tailscale firewall rule, Bluetooth name |
 | `scripts/soak.sh` | Long-running health log (ping, load, battery, temperatures, services) |
 | `scripts/dump-*.sh`, `twrp-to-recovery.sh` | Partition backup from TWRP (chunked, sha256-verified) |
@@ -104,7 +110,8 @@ This work stands on other people's work:
   parameters, the MP2650 charger register map, and the gen4m Wi-Fi driver this work patches.
 - **Mesa** / **panfrost** — <https://mesa3d.org>: our patch only adds the Mali-G77 model entry and splits v9 compute
   jobs across the shader cores; the G77 entry follows MT6891-Mainline's Mesa fork.
-- **Docker**, **Tailscale**, **Alpine Linux** packages used as-is.
+- **Docker**, **Tailscale**, **btop**, **Alpine Linux** packages used as-is; the Linux kernel's TCPM/TCPCI
+  Type-C stack and the Terminus console font.
 - Community research on denniz (XDA, the unofficial LineageOS builds by ManshuTyagi) for the rollback/BROM path.
 - Methodology follows the author's sister project for the OnePlus 9 Pro:
   <https://github.com/bluelightsaber/oneplus9pro-postmarketos>.

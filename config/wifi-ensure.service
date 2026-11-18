@@ -1,0 +1,11 @@
+[Unit]
+Description=Recover the Wi-Fi chip when its TX path hangs
+After=NetworkManager.service
+
+[Service]
+ExecStart=/usr/local/sbin/wifi-ensure
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

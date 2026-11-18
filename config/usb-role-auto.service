@@ -1,0 +1,11 @@
+[Unit]
+Description=USB role auto-switch (gadget for the PC, host for an OTG hub)
+After=multi-user.target
+
+[Service]
+ExecStart=/usr/local/sbin/usb-role-auto
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

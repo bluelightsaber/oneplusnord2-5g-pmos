@@ -40,10 +40,14 @@ cd /
 for i in $(seq 1 10); do [ -e /sys/class/net/usb0 ] && break; sleep 1; done
 ifconfig usb0 172.16.42.1 netmask 255.255.255.0 up && log "usb0 up"
 ( while true; do setsid sh -c "exec sh </dev/ttyGS0 >/dev/ttyGS0 2>&1"; sleep 1; done ) &
+GS_LOOP=$!
 log "shell on ttyGS0"
 # RAM boot of a full rootfs without flashing (scripts/pmos-ram.sh): the host unpacks it into /newroot and writes
 # the init path into /tmp/switchroot; then PID 1 (us) moves the mounts and switches. Gadget + usb0 IP stay.
 while [ ! -e /tmp/switchroot ]; do sleep 2; done
 log "switch_root to /newroot ($(cat /tmp/switchroot))"
 for m in dev proc sys; do mkdir -p /newroot/$m; mount --move /$m /newroot/$m; done
+# the ttyGS0 respawn loop must not outlive the initramfs: once its busybox is gone and the gadget is torn
+# down (USB host mode for an OTG hub) it spins printing "sleep: not found" on the console
+kill $GS_LOOP 2>/dev/null; pkill -f "exec sh </dev/ttyGS0" 2>/dev/null
 exec switch_root /newroot $(cat /tmp/switchroot)
